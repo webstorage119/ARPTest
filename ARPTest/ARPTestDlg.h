@@ -52,4 +52,5 @@ public:
 	CButton m_replaceImagesCheck;
 	CEdit m_imagePathEdit;
 	CButton m_attackButton;
+	CStatic m_statusStatic;
 };

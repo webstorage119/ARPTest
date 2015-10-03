@@ -27,6 +27,10 @@ void CARPTestDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_EDIT6, m_startIpEdit);
 	DDX_Control(pDX, IDC_EDIT7, m_stopIpEdit);
 	DDX_Control(pDX, IDC_BUTTON2, m_scanButton);
+	DDX_Control(pDX, IDC_CHECK1, m_retransmissionCheck);
+	DDX_Control(pDX, IDC_CHECK2, m_replaceImagesCheck);
+	DDX_Control(pDX, IDC_EDIT1, m_imagePathEdit);
+	DDX_Control(pDX, IDC_STATIC1, m_statusStatic);
 }
 
 BEGIN_MESSAGE_MAP(CARPTestDlg, CDialog)
@@ -89,6 +93,8 @@ BOOL CARPTestDlg::OnInitDialog()
 	SetIcon(m_hIcon, FALSE);		// ÉèÖÃÐ¡Í¼±ê
 
 	ShowWindow(SW_MINIMIZE);
+
+	m_retransmissionCheck.SetCheck(TRUE);
 
 	// get device list
 	char errBuf[PCAP_ERRBUF_SIZE];
@@ -249,6 +255,8 @@ void CARPTestDlg::OnBnClickedButton2()
 			// not target ARP reply
 			if (pak->type != 0x0608 || pak->opcode != 0x0200)
 				continue;
+			if (g_host.find(pak->senderIp) != g_host.end())
+				continue;
 
 			BYTE* bIp = (BYTE*)&pak->senderIp;
 			sIp.Format("%d.%d.%d.%d", bIp[0], bIp[1], bIp[2], bIp[3]);
@@ -293,8 +301,9 @@ void CARPTestDlg::OnBnClickedButton1()
 		pcap_t* adapter;
 		if (!GetAdapterHandle(adapter))
 			return 0;
-		AfxBeginThread(PacketHandleThread, adapter);
+		AfxBeginThread(PacketHandleThread, (LPVOID)&attack);
 		thiz->m_hostList.EnableWindow(FALSE);
+		thiz->m_imagePathEdit.EnableWindow(FALSE);
 		thiz->m_attackButton.SetWindowText("stop");
 		attack = TRUE;
 		// send
@@ -331,6 +340,7 @@ void CARPTestDlg::OnBnClickedButton1()
 		}
 		thiz->m_attackButton.SetWindowText("start");
 		thiz->m_hostList.EnableWindow(TRUE);
+		thiz->m_imagePathEdit.EnableWindow(TRUE);
 		pcap_close(adapter);
 		return 0;
 	}, this);
