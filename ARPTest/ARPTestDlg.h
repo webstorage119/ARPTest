@@ -43,10 +43,13 @@ public:
 	CListBox m_deviceDescList;
 	CEdit m_selfIpEdit;
 	CEdit m_selfMacEdit;
-	CEdit m_selfGetwayEdit;
+	CEdit m_selfGatewayEdit;
 	CListBox m_hostList;
 	CEdit m_startIpEdit;
 	CEdit m_stopIpEdit;
 	CButton m_scanButton;
+	CButton m_retransmissionCheck;
+	CButton m_replaceImagesCheck;
+	CEdit m_imagePathEdit;
 	CButton m_attackButton;
 };

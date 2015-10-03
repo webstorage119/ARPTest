@@ -45,12 +45,15 @@ extern pcap_if_t* g_deviceList;
 extern pcap_if_t* g_adapter;
 extern int g_selfIp;
 extern BYTE g_selfMac[6];
-extern int g_selfGetway;
+extern int g_selfGateway;
+extern BYTE g_gatewayMac[6];
 
 extern map<int, BYTE[6]> g_host;
 
 
 BOOL inputIp(LPCSTR src, int& dest);
-int reverseInt(int n);
+
 // remember pcap_close()
 BOOL GetAdapterHandle(pcap_t*& adapter);
+
+UINT AFX_CDECL PacketHandleThread(LPVOID _adapter);

