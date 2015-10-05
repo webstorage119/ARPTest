@@ -48,7 +48,7 @@ public:
 	CEdit m_startIpEdit;
 	CEdit m_stopIpEdit;
 	CButton m_scanButton;
-	CButton m_retransmissionCheck;
+	CButton m_forwardCheck;
 	CButton m_replaceImagesCheck;
 	CEdit m_imagePathEdit;
 	CButton m_attackButton;
