@@ -74,9 +74,9 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 	DWORD tcpLen = pInitTcp->headerLen * 4;
 
 
-	// receive image
+	// receive image, you can write it to a file
 	{
-	BYTE* ackPkt = new BYTE[ETH_LENGTH + /*sizeof(IPPacket) + sizeof(TCPPacket)*/ipLen + tcpLen];
+	BYTE* ackPkt = new BYTE[ETH_LENGTH + ipLen + tcpLen];
 	MoveMemory(ackPkt, g_gatewayMac, 6);
 	MoveMemory(ackPkt + 6, g_selfMac, 6);
 	MoveMemory(ackPkt + 12, link.initPacket + 12, 2 + ipLen + tcpLen);
@@ -124,7 +124,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 		if (lastAck < ack)
 			lastAck = ack;
 		pPktTcp->ack = htonl(lastAck);
-		pPktTcp->CalcCheckSum(pPktIp->sourceIp, pPktIp->destinationIp, sizeof(TCPPacket));
+		pPktTcp->CalcCheckSum(pPktIp->sourceIp, pPktIp->destinationIp, (WORD)tcpLen);
 		pcap_sendpacket(adapter, (u_char*)ackPkt, ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
 		if (pCurTcp->psh)
 			break;

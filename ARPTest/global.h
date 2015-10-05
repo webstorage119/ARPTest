@@ -125,7 +125,7 @@ struct TCPPacket
 			BYTE reserve;
 			BYTE protocol;
 			WORD tcpLength;
-		} pseudo_header = { sourceIp, destinationIp, 0, PROTOCOL_TCP, tcpTotalLen };
+		} pseudo_header = { sourceIp, destinationIp, 0, PROTOCOL_TCP, htons(tcpTotalLen) };
 
 		DWORD cksum = 0;
 		BYTE* ptr = (BYTE*)&pseudo_header;

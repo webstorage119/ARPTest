@@ -95,9 +95,6 @@ BOOL CARPTestDlg::OnInitDialog()
 	ShowWindow(SW_MINIMIZE);
 
 	m_forwardCheck.SetCheck(TRUE);
-	// test
-	m_replaceImagesCheck.SetCheck(TRUE);
-	m_imagePathEdit.SetWindowText("F:\\a.jpg");
 
 	// get device list
 	char errBuf[PCAP_ERRBUF_SIZE];
