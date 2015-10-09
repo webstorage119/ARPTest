@@ -5,6 +5,7 @@
 #pragma once
 #include "afxwin.h"
 #include <pcap.h>
+#include "global.h"
 
 
 // CARPTestDlg ¶Ô»°¿ò
@@ -35,8 +36,14 @@ public:
 	afx_msg void OnDestroy();
 	afx_msg void OnLbnSelchangeList1();
 	afx_msg void OnBnClickedButton2();
+	afx_msg void OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult);
+	afx_msg void OnBnClickedCheck3();
+	afx_msg void OnBnClickedCheck4();
+	afx_msg void OnBnClickedCheck1();
+	afx_msg void OnBnClickedCheck2();
+	afx_msg void OnEnKillfocusEdit1();
 
-	pcap_if_t* GetAdapter();
+	HostInfoSetting* GetCurSelHost(int& index);
 
 
 public:
@@ -44,13 +51,15 @@ public:
 	CEdit m_selfIpEdit;
 	CEdit m_selfMacEdit;
 	CEdit m_selfGatewayEdit;
-	CListBox m_hostList;
-	CEdit m_startIpEdit;
-	CEdit m_stopIpEdit;
-	CButton m_scanButton;
+	CButton m_confirmButton;
+
+	CListCtrl m_hostList;
+	CButton m_cheatTargetCheck;
+	CButton m_cheatGatewayCheck;
 	CButton m_forwardCheck;
 	CButton m_replaceImagesCheck;
 	CEdit m_imagePathEdit;
-	CButton m_attackButton;
 	CStatic m_statusStatic;
+
+	CButton m_attackButton;
 };

