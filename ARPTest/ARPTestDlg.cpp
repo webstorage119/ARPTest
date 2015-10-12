@@ -44,6 +44,7 @@ BEGIN_MESSAGE_MAP(CARPTestDlg, CDialog)
 	ON_BN_CLICKED(IDC_CHECK1, &CARPTestDlg::OnBnClickedCheck1)
 	ON_BN_CLICKED(IDC_CHECK2, &CARPTestDlg::OnBnClickedCheck2)
 	ON_EN_KILLFOCUS(IDC_EDIT1, &CARPTestDlg::OnEnKillfocusEdit1)
+	ON_WM_TIMER()
 END_MESSAGE_MAP()
 
 // 如果向对话框添加最小化按钮，则需要下面的代码
@@ -199,6 +200,7 @@ void CARPTestDlg::OnBnClickedButton2()
 {
 	m_deviceDescList.EnableWindow(FALSE);
 	m_confirmButton.EnableWindow(FALSE);
+	SetTimer(0, 3000, NULL);
 	AfxBeginThread([](LPVOID _thiz)->UINT{
 		CARPTestDlg* thiz = (CARPTestDlg*)_thiz;
 		pcap_t* adapter = NULL;
@@ -239,7 +241,7 @@ void CARPTestDlg::OnBnClickedButton2()
 			if (res == 0) // timeout
 				continue;
 			const ARPPacket* pak = (const ARPPacket*)pkt_data;
-			if (pak->opcode != ARP_OPCODE_REPLY && pak->opcode != ARP_OPCODE_REQUEST) // not ARP
+			if (pak->type != PROTOCOL_ARP || pak->opcode != ARP_OPCODE_REPLY && pak->opcode != ARP_OPCODE_REQUEST) // not ARP
 				continue;
 			g_hostAttackListLock.Lock();
 			if (g_host.find(pak->senderIp) != g_host.end()) // not in g_host
@@ -436,6 +438,23 @@ void CARPTestDlg::OnEnKillfocusEdit1()
 		MessageBox("Failed to load the image.");
 	}
 	host->imageDataLock.Unlock();
+}
+
+// update status
+void CARPTestDlg::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == 0) // update status
+	{
+		int index;
+		HostInfoSetting* host = GetCurSelHost(index);
+		if (host == NULL)
+			return;
+		CString status;
+		status.Format("send %u, receive %u", host->send, host->receive);
+		m_statusStatic.SetWindowText(status);
+	}
+
+	CDialog::OnTimer(nIDEvent);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////

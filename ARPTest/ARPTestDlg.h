@@ -42,6 +42,7 @@ public:
 	afx_msg void OnBnClickedCheck1();
 	afx_msg void OnBnClickedCheck2();
 	afx_msg void OnEnKillfocusEdit1();
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
 
 	HostInfoSetting* GetCurSelHost(int& index);
 
