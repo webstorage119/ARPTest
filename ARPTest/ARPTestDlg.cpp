@@ -140,7 +140,7 @@ void CARPTestDlg::OnDestroy()
 
 	g_attacking = FALSE;
 	g_programRunning = FALSE;
-	Sleep(3000); // wait for threads end
+	Sleep(3000); // wait for threads to end
 	pcap_freealldevs(g_deviceList);
 }
 
@@ -157,7 +157,7 @@ void CARPTestDlg::OnLbnSelchangeList1()
 
 	// get adapter infomation
 	CString ip, gateway;
-	BYTE mac[6];
+	MacAddress mac;
 
 	IP_ADAPTER_INFO adapterInfo[16];
 	DWORD bufSize = sizeof(adapterInfo);
@@ -172,7 +172,7 @@ void CARPTestDlg::OnLbnSelchangeList1()
 		if (name.Find(pInfo->AdapterName) != -1)
 		{
 			ip = pInfo->IpAddressList.IpAddress.String;
-			MoveMemory(mac, pInfo->Address, 6);
+			mac = *(MacAddress*)pInfo->Address;
 			gateway = pInfo->GatewayList.IpAddress.String;
 			break;
 		}
@@ -187,10 +187,8 @@ void CARPTestDlg::OnLbnSelchangeList1()
 	DWORD iIp;
 	inputIp(ip, iIp);
 	g_selfIp = iIp;
-	CString sMac;
-	sMac.Format("%02X-%02X-%02X-%02X-%02X-%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	m_selfMacEdit.SetWindowText(sMac);
-	MoveMemory(g_selfMac, mac, 6);
+	m_selfMacEdit.SetWindowText((CString)mac);
+	g_selfMac = mac;
 	m_selfGatewayEdit.SetWindowText(gateway);
 	inputIp(gateway, g_selfGateway);
 }
@@ -208,7 +206,7 @@ void CARPTestDlg::OnBnClickedButton2()
 			return 0;
 
 		ARPPacket packet(TRUE);
-		FillMemory(packet.destinationMac, 6, 0xFF); // broadcast
+		memset(packet.destinationMac.byteArray, 0xFF, sizeof(packet.destinationMac.byteArray)); // broadcast
 		packet.SetSender(g_selfIp, g_selfMac);
 
 		// get IP range
@@ -260,8 +258,7 @@ void CARPTestDlg::OnBnClickedButton2()
 				CString tmp;
 				tmp.Format("%u.%u.%u.%u", bIp[0], bIp[1], bIp[2], bIp[3]);
 				thiz->m_hostList.SetItemText(index, 1, tmp);
-				tmp.Format("%02X-%02X-%02X-%02X-%02X-%02X", pak->senderMac[0], pak->senderMac[1], pak->senderMac[2], pak->senderMac[3], pak->senderMac[4], pak->senderMac[5]);
-				thiz->m_hostList.SetItemText(index, 2, tmp);
+				thiz->m_hostList.SetItemText(index, 2, (CString)pak->senderMac);
 				thiz->m_hostList.SetItemText(index, 3, "¡ü¡ý");
 				thiz->m_hostList.SetItemText(index, 4, "true");
 				thiz->m_hostList.SetItemData(index, (DWORD_PTR)pak->senderIp);
@@ -270,11 +267,11 @@ void CARPTestDlg::OnBnClickedButton2()
 			g_hostAttackListLock.Lock();
 			HostInfoSetting& host = g_host[pak->senderIp];
 			host.ip = pak->senderIp;
-			MoveMemory(host.mac, pak->senderMac, 6);
+			host.mac = pak->senderMac;
 			g_hostAttackListLock.Unlock();
 
 			if (pak->senderIp == g_selfGateway)
-				MoveMemory(g_gatewayMac, pak->senderMac, 6);
+				g_gatewayMac = pak->senderMac;
 		}
 
 		pcap_close(adapter);
@@ -282,7 +279,11 @@ void CARPTestDlg::OnBnClickedButton2()
 	}, this);
 }
 
+#pragma region UI
 /////////////////////////////////////////////////////////////////////////////////////////
+//
+//                                         UI
+//
 
 // add / delete attack list / display host information
 void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
@@ -331,12 +332,12 @@ void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 	{
 		HostInfoSetting& host = g_host[ip];
 		g_attackList[ip] = &host;
-		g_attackListMac[BMacToDw64(host.mac)] = &host;
+		g_attackListMac[host.mac] = &host;
 	}
 	else
 	{
 		g_attackList.erase(ip);
-		g_attackListMac.erase(BMacToDw64(g_host[ip].mac));
+		g_attackListMac.erase(g_host[ip].mac);
 	}
 	g_hostAttackListLock.Unlock();
 }
@@ -458,6 +459,7 @@ void CARPTestDlg::OnTimer(UINT_PTR nIDEvent)
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
+#pragma endregion
 
 // start / stop and send ARP packet
 void CARPTestDlg::OnBnClickedButton1()

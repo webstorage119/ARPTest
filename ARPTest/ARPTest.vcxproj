@@ -107,9 +107,11 @@
     <ClInclude Include="ARPTest.h" />
     <ClInclude Include="ARPTestDlg.h" />
     <ClInclude Include="global.h" />
+    <ClInclude Include="Packet.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="TypeHelper.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ARPTest.cpp" />

