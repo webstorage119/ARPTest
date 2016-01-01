@@ -119,8 +119,8 @@ BOOL CARPTestDlg::OnInitDialog()
 		return TRUE;
 	}
 	// show device list
-	for (pcap_if_t* device = g_deviceList; device != NULL; device = device->next)
-		m_deviceDescList.AddString(device->description != NULL ? device->description : "");
+	for (pcap_if_t* device = g_deviceList; device != nullptr; device = device->next)
+		m_deviceDescList.AddString(device->description != nullptr ? device->description : "");
 	if (m_deviceDescList.GetCount() <= 0)
 	{
 		MessageBox("No interface found! Make sure WinPcap is installed.", NULL, MB_ICONERROR);
@@ -168,7 +168,7 @@ void CARPTestDlg::OnLbnSelchangeList1()
 		return;
 	}
 	CString name = g_adapter->name;
-	for (PIP_ADAPTER_INFO pInfo = adapterInfo; pInfo != NULL; pInfo = pInfo->Next)
+	for (PIP_ADAPTER_INFO pInfo = adapterInfo; pInfo != nullptr; pInfo = pInfo->Next)
 		if (name.Find(pInfo->AdapterName) != -1)
 		{
 			ip = pInfo->IpAddressList.IpAddress.String;
@@ -201,7 +201,7 @@ void CARPTestDlg::OnBnClickedButton2()
 	SetTimer(0, 3000, NULL);
 	AfxBeginThread([](LPVOID _thiz)->UINT{
 		CARPTestDlg* thiz = (CARPTestDlg*)_thiz;
-		pcap_t* adapter = NULL;
+		pcap_t* adapter = nullptr;
 		if (!GetAdapterHandle(adapter))
 			return 0;
 
@@ -331,8 +331,8 @@ void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 	if (checked != 0)
 	{
 		HostInfoSetting& host = g_host[ip];
-		g_attackList[ip] = &host;
-		g_attackListMac[host.mac] = &host;
+		g_attackList[ip].reset(&host);
+		g_attackListMac[host.mac].reset(&host);
 	}
 	else
 	{
@@ -342,15 +342,15 @@ void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 	g_hostAttackListLock.Unlock();
 }
 
-HostInfoSetting* CARPTestDlg::GetCurSelHost(int& index)
+std::unique_ptr<HostInfoSetting> CARPTestDlg::GetCurSelHost(int& index)
 {
 	POSITION pos = m_hostList.GetFirstSelectedItemPosition();
-	if (pos == NULL)
-		return NULL;
+	if (pos == nullptr)
+		return nullptr;
 	index = m_hostList.GetNextSelectedItem(pos);
 	DWORD ip = (DWORD)m_hostList.GetItemData(index);
 	g_hostAttackListLock.Lock();
-	HostInfoSetting* res = &g_host[ip];
+	std::unique_ptr<HostInfoSetting> res(&g_host[ip]);
 	g_hostAttackListLock.Unlock();
 	return res;
 }
@@ -359,8 +359,8 @@ HostInfoSetting* CARPTestDlg::GetCurSelHost(int& index)
 void CARPTestDlg::OnBnClickedCheck3()
 {
 	int index;
-	HostInfoSetting* host = GetCurSelHost(index);
-	if (host == NULL)
+	std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+	if (host == nullptr)
 		return;
 	host->cheatTarget = m_cheatTargetCheck.GetCheck();
 	CString tmp;
@@ -375,8 +375,8 @@ void CARPTestDlg::OnBnClickedCheck3()
 void CARPTestDlg::OnBnClickedCheck4()
 {
 	int index;
-	HostInfoSetting* host = GetCurSelHost(index);
-	if (host == NULL)
+	std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+	if (host == nullptr)
 		return;
 	host->cheatGateway = m_cheatGatewayCheck.GetCheck();
 	CString tmp;
@@ -391,8 +391,8 @@ void CARPTestDlg::OnBnClickedCheck4()
 void CARPTestDlg::OnBnClickedCheck1()
 {
 	int index;
-	HostInfoSetting* host = GetCurSelHost(index);
-	if (host == NULL)
+	std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+	if (host == nullptr)
 		return;
 	host->forward = m_forwardCheck.GetCheck();
 	m_hostList.SetItemText(index, 4, host->forward ? "true" : "false");
@@ -402,8 +402,8 @@ void CARPTestDlg::OnBnClickedCheck1()
 void CARPTestDlg::OnBnClickedCheck2()
 {
 	int index;
-	HostInfoSetting* host = GetCurSelHost(index);
-	if (host == NULL)
+	std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+	if (host == nullptr)
 		return;
 	host->replaceImages = m_replaceImagesCheck.GetCheck();
 	m_hostList.SetItemText(index, 5, host->replaceImages ? host->imagePath : "");
@@ -413,8 +413,8 @@ void CARPTestDlg::OnBnClickedCheck2()
 void CARPTestDlg::OnEnKillfocusEdit1()
 {
 	int index;
-	HostInfoSetting* host = GetCurSelHost(index);
-	if (host == NULL)
+	std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+	if (host == nullptr)
 		return;
 	m_imagePathEdit.GetWindowText(host->imagePath);
 	m_hostList.SetItemText(index, 5, host->replaceImages ? host->imagePath : "");
@@ -425,17 +425,13 @@ void CARPTestDlg::OnEnKillfocusEdit1()
 	if (f.Open(host->imagePath, CFile::modeRead | CFile::typeBinary))
 	{
 		host->imageDataLen = (DWORD)f.GetLength();
-		if (host->imageData != NULL)
-			delete host->imageData;
-		host->imageData = new BYTE[host->imageDataLen];
-		f.Read(host->imageData, host->imageDataLen);
+		host->imageData.reset(new BYTE[host->imageDataLen]);
+		f.Read(host->imageData.get(), host->imageDataLen);
 	}
 	else
 	{
 		host->imageDataLen = 0;
-		if (host->imageData != NULL)
-			delete host->imageData;
-		host->imageData = NULL;
+		host->imageData.reset();
 		MessageBox("Failed to load the image.");
 	}
 	host->imageDataLock.Unlock();
@@ -447,8 +443,8 @@ void CARPTestDlg::OnTimer(UINT_PTR nIDEvent)
 	if (nIDEvent == 0) // update status
 	{
 		int index;
-		HostInfoSetting* host = GetCurSelHost(index);
-		if (host == NULL)
+		std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+		if (host == nullptr)
 			return;
 		CString status;
 		status.Format("send %u, receive %u", host->send, host->receive);
@@ -490,7 +486,7 @@ void CARPTestDlg::OnBnClickedButton1()
 		{
 			DWORD time = GetTickCount();
 			g_hostAttackListLock.Lock();
-			for (const auto i : g_attackList)
+			for (const auto& i : g_attackList)
 			{
 				if (i.second->cheatTarget) // send to target
 				{
@@ -511,7 +507,7 @@ void CARPTestDlg::OnBnClickedButton1()
 
 		// recover
 		g_hostAttackListLock.Lock();
-		for (const auto i : g_attackList)
+		for (const auto& i : g_attackList)
 		{
 			// send to target
 			packet.SetSender(g_selfGateway, g_gatewayMac);

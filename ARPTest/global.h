@@ -1,38 +1,35 @@
 #pragma once
 #include <pcap.h>
 #include <map>
-using std::map;
+#include <memory>
 
 #include "Packet.h"
 
 
 struct HostInfoSetting
 {
+	// information
 	DWORD ip;
 	MacAddress mac;
 	DWORD send, receive;
 
+	// image infomation
 	struct HttpImageLink
 	{
 		WORD sourcePort;
-		BYTE* initPacket;
+		std::unique_ptr<BYTE[]> initPacket;
 		DWORD initPacketLen;
-
-		~HttpImageLink()
-		{
-			if (initPacket != NULL)
-				delete initPacket;
-		}
 	};
-	map<WORD, HttpImageLink> httpImageLink; // port -> HttpImageLink
+	std::map<WORD, HttpImageLink> httpImageLink; // port -> HttpImageLink
 	CCriticalSection httpImageLinkLock;
 
+	// setting
 	BOOL cheatTarget, cheatGateway;
 	BOOL forward;
 	BOOL replaceImages;
 	CString imagePath;
 	DWORD imageDataLen;
-	BYTE* imageData;
+	std::unique_ptr<BYTE[]> imageData;
 	CCriticalSection imageDataLock;
 
 	HostInfoSetting()
@@ -42,16 +39,15 @@ struct HostInfoSetting
 		forward = TRUE;
 		send = receive = 0;
 		replaceImages = FALSE;
-		imageData = NULL;
+		imageDataLen = 0;
 	}
 
 	~HostInfoSetting()
 	{
-		if (imageData != NULL)
+		if (imageData != nullptr)
 		{
 			imageDataLock.Lock();
-			delete imageData;
-			imageData = NULL;
+			imageData.reset();
 			imageDataLock.Unlock();
 		}
 	}
@@ -68,9 +64,9 @@ extern MacAddress g_selfMac;
 extern DWORD g_selfGateway;
 extern MacAddress g_gatewayMac;
 
-extern map<DWORD, HostInfoSetting> g_host; // IP -> HostInfoSetting
-extern map<DWORD, HostInfoSetting*> g_attackList; // IP -> HostInfoSetting
-extern map<MacAddress, HostInfoSetting*> g_attackListMac; // MAC -> HostInfoSetting
+extern std::map<DWORD, HostInfoSetting> g_host; // IP -> HostInfoSetting
+extern std::map<DWORD, std::unique_ptr<HostInfoSetting> > g_attackList; // IP -> HostInfoSetting
+extern std::map<MacAddress, std::unique_ptr<HostInfoSetting> > g_attackListMac; // MAC -> HostInfoSetting
 extern CCriticalSection g_hostAttackListLock; // for g_host g_attackList g_attackListMac
 
 

@@ -44,7 +44,7 @@ public:
 	afx_msg void OnEnKillfocusEdit1();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 
-	HostInfoSetting* GetCurSelHost(int& index);
+	std::unique_ptr<HostInfoSetting> GetCurSelHost(int& index);
 
 
 public:
