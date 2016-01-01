@@ -23,7 +23,7 @@ AdapterHandle GetAdapterHandle()
 		return adapter;
 	// open adapter
 	char errBuf[PCAP_ERRBUF_SIZE];
-	adapter.reset(pcap_open_live(g_adapter->name, 65536, 1, 1000, errBuf));
+	adapter.reset(pcap_open_live(g_adapter->name, 65536, 1, 1, errBuf));
 	if (adapter == nullptr)
 		AfxMessageBox("Error in pcap_open_live: " + CString(g_adapter->name) + " is not supported by WinPcap", MB_ICONERROR);
 	return adapter;
