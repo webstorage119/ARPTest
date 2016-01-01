@@ -4,8 +4,7 @@
 
 #pragma once
 #include "afxwin.h"
-#include <pcap.h>
-#include "global.h"
+struct HostInfoSetting;
 
 
 // CARPTestDlg ¶Ô»°¿ò

