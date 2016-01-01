@@ -14,8 +14,8 @@ DWORD g_selfGateway = 0;
 MacAddress g_gatewayMac;
 
 std::map<DWORD, HostInfoSetting> g_host;
-std::map<DWORD, std::unique_ptr<HostInfoSetting> > g_attackList;
-std::map<MacAddress, std::unique_ptr<HostInfoSetting> > g_attackListMac;
+std::map<DWORD, HostInfoSetting*> g_attackList;
+std::map<MacAddress, HostInfoSetting*> g_attackListMac;
 CCriticalSection g_hostAttackListLock;
 
 
@@ -59,7 +59,6 @@ void SetFilter(pcap_t* adapter, LPCSTR exp)
 // param : { ip, port }
 static UINT AFX_CDECL ReplaceImageThread(LPVOID param)
 {
-	CARPTestDlg* thiz = (CARPTestDlg*)AfxGetApp()->m_pMainWnd;
 	pcap_t* adapter;
 	if (!GetAdapterHandle(adapter))
 		return 0;

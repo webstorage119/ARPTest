@@ -65,8 +65,8 @@ extern DWORD g_selfGateway;
 extern MacAddress g_gatewayMac;
 
 extern std::map<DWORD, HostInfoSetting> g_host; // IP -> HostInfoSetting
-extern std::map<DWORD, std::unique_ptr<HostInfoSetting> > g_attackList; // IP -> HostInfoSetting
-extern std::map<MacAddress, std::unique_ptr<HostInfoSetting> > g_attackListMac; // MAC -> HostInfoSetting
+extern std::map<DWORD, HostInfoSetting*> g_attackList; // IP -> HostInfoSetting
+extern std::map<MacAddress, HostInfoSetting*> g_attackListMac; // MAC -> HostInfoSetting
 extern CCriticalSection g_hostAttackListLock; // for g_host g_attackList g_attackListMac
 
 

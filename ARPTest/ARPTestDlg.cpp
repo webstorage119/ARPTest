@@ -331,8 +331,8 @@ void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 	if (checked != 0)
 	{
 		HostInfoSetting& host = g_host[ip];
-		g_attackList[ip].reset(&host);
-		g_attackListMac[host.mac].reset(&host);
+		g_attackList[ip] = &host;
+		g_attackListMac[host.mac] = &host;
 	}
 	else
 	{
@@ -342,7 +342,7 @@ void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 	g_hostAttackListLock.Unlock();
 }
 
-std::unique_ptr<HostInfoSetting> CARPTestDlg::GetCurSelHost(int& index)
+HostInfoSetting* CARPTestDlg::GetCurSelHost(int& index)
 {
 	POSITION pos = m_hostList.GetFirstSelectedItemPosition();
 	if (pos == nullptr)
@@ -350,7 +350,7 @@ std::unique_ptr<HostInfoSetting> CARPTestDlg::GetCurSelHost(int& index)
 	index = m_hostList.GetNextSelectedItem(pos);
 	DWORD ip = (DWORD)m_hostList.GetItemData(index);
 	g_hostAttackListLock.Lock();
-	std::unique_ptr<HostInfoSetting> res(&g_host[ip]);
+	HostInfoSetting* res = &g_host[ip];
 	g_hostAttackListLock.Unlock();
 	return res;
 }
@@ -359,7 +359,7 @@ std::unique_ptr<HostInfoSetting> CARPTestDlg::GetCurSelHost(int& index)
 void CARPTestDlg::OnBnClickedCheck3()
 {
 	int index;
-	std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+	HostInfoSetting* host = GetCurSelHost(index);
 	if (host == nullptr)
 		return;
 	host->cheatTarget = m_cheatTargetCheck.GetCheck();
@@ -375,7 +375,7 @@ void CARPTestDlg::OnBnClickedCheck3()
 void CARPTestDlg::OnBnClickedCheck4()
 {
 	int index;
-	std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+	HostInfoSetting* host = GetCurSelHost(index);
 	if (host == nullptr)
 		return;
 	host->cheatGateway = m_cheatGatewayCheck.GetCheck();
@@ -391,7 +391,7 @@ void CARPTestDlg::OnBnClickedCheck4()
 void CARPTestDlg::OnBnClickedCheck1()
 {
 	int index;
-	std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+	HostInfoSetting* host = GetCurSelHost(index);
 	if (host == nullptr)
 		return;
 	host->forward = m_forwardCheck.GetCheck();
@@ -402,7 +402,7 @@ void CARPTestDlg::OnBnClickedCheck1()
 void CARPTestDlg::OnBnClickedCheck2()
 {
 	int index;
-	std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+	HostInfoSetting* host = GetCurSelHost(index);
 	if (host == nullptr)
 		return;
 	host->replaceImages = m_replaceImagesCheck.GetCheck();
@@ -413,7 +413,7 @@ void CARPTestDlg::OnBnClickedCheck2()
 void CARPTestDlg::OnEnKillfocusEdit1()
 {
 	int index;
-	std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+	HostInfoSetting* host = GetCurSelHost(index);
 	if (host == nullptr)
 		return;
 	m_imagePathEdit.GetWindowText(host->imagePath);
@@ -443,7 +443,7 @@ void CARPTestDlg::OnTimer(UINT_PTR nIDEvent)
 	if (nIDEvent == 0) // update status
 	{
 		int index;
-		std::unique_ptr<HostInfoSetting> host(GetCurSelHost(index));
+		HostInfoSetting* host = GetCurSelHost(index);
 		if (host == nullptr)
 			return;
 		CString status;
