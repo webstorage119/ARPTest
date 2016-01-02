@@ -4,6 +4,7 @@
 #include <mutex>
 #include <pcap.h>
 #include "TypeHelper.h"
+#include "ThreadPool.h"
 
 
 extern volatile BOOL g_programRunning;
@@ -20,6 +21,8 @@ extern std::map<DWORD, HostInfoSetting> g_host; // IP -> HostInfoSetting
 extern std::map<DWORD, HostInfoSetting*> g_attackList; // IP -> HostInfoSetting
 extern std::map<MacAddress, HostInfoSetting*> g_attackListMac; // MAC -> HostInfoSetting
 extern std::mutex g_hostAttackListLock; // for g_host g_attackList g_attackListMac
+
+extern ThreadPool g_threadPool;
 
 
 void PacketHandleThread();

