@@ -115,56 +115,36 @@ public:
 #pragma region Initial Packet
 		///////////////////////////////////////////////////////////////////////////////////
 		// send HTTP header in the initial packet
-		LPCSTR pHttp = (LPCSTR)&link.initPacket[ETH_LENGTH + ipLen + tcpLen];
-		LPCSTR pContentType = strstr(pHttp, "Content-Type: image/");
-		LPCSTR pContentLen = strstr(pHttp, "Content-Length: ") + strlen("Content-Length: ");
-		DWORD httpHeaderLen = strstr(pHttp, "\r\n\r\n") + strlen("\r\n\r\n") - pHttp;
-
-		*(MacAddress*)sendBuf.get() = target.mac;					// destination MAC
-		*(MacAddress*)(sendBuf.get() + 6) = g_selfMac;			// source MAC
-
-		BYTE* p1 = sendBuf.get() + 12;
-		const BYTE* p2 = link.initPacket.get() + 12;
-		DWORD len;
-		if (pContentType < pContentLen)
+		const char* pHttp = (const char*)&link.initPacket[ETH_LENGTH + ipLen + tcpLen];
+		std::string httpHeader(pHttp, strstr(pHttp, "\r\n\r\n") + 2 - pHttp); // "...\r\n"
+		int iContentLen = httpHeader.find("Content-Length: ");
+		if (iContentLen == std::string::npos)
 		{
-			len = 2 + ipLen + tcpLen + (pContentType - pHttp);
-			memcpy(p1, p2, len);							// data
-			p1 += len; p2 += len;
-
-			len = strlen("Content-Type: image/jpeg");
-			memcpy(p1, "Content-Type: image/jpeg", len);	// content type
-			p1 += len; p2 = (BYTE*)strstr((LPCSTR)p2, "\r");
-
-			len = (BYTE*)pContentLen - p2;
-			memcpy(p1, p2, len);							// data
-			p1 += len; p2 += len;
-
-			_itoa_s(target.imageDataLen, (LPSTR)p1, 15, 10);	// content length
-			for (; *(LPCSTR)p1 != '\0'; p1++); p2 = (BYTE*)strstr((LPCSTR)p2, "\r");
+			char sLength[20];
+			sprintf_s(sLength, "%u\r\n\r\n", target.imageDataLen);
+			httpHeader += sLength;
 		}
 		else
 		{
-			len = 2 + ipLen + tcpLen + (pContentLen - pHttp);
-			memcpy(p1, p2, len);							// data
-			p1 += len; p2 += len;
-
-			_itoa_s(target.imageDataLen, (LPSTR)p1, 15, 10);	// content length
-			for (; *(LPCSTR)p1 != '\0'; p1++); p2 = (BYTE*)strstr((LPCSTR)p2, "\r");
-
-			len = (BYTE*)pContentType - p2;
-			memcpy(p1, p2, len);							// data
-			p1 += len; p2 += len;
-
-			len = strlen("Content-Type: image/jpeg");
-			memcpy(p1, "Content-Type: image/jpeg", len);	// content type
-			p1 += len; p2 = (BYTE*)strstr((LPCSTR)p2, "\r");
+			char sLength[20];
+			_itoa_s(target.imageDataLen, sLength, 10);
+			httpHeader.replace(iContentLen, httpHeader.find('\r', iContentLen), sLength);
+			httpHeader += "\r\n";
 		}
 
-		len = (BYTE*)pHttp + httpHeaderLen - p2;
-		memcpy(p1, p2, len);								// data
+		*(MacAddress*)sendBuf.get() = target.mac;			// destination MAC
+		*(MacAddress*)(sendBuf.get() + 6) = g_selfMac;		// source MAC
+
+		// IP, TCP
+		BYTE* p1 = sendBuf.get() + 12;
+		DWORD len = 2 + ipLen + tcpLen;
+		memcpy(p1, link.initPacket.get() + 12, len);
 		p1 += len;
 
+		// HTTP
+		len = httpHeader.length();
+		memcpy(p1, httpHeader.c_str(), len);
+		p1 += len;
 
 		DWORD totalLen = p1 - sendBuf.get();
 		IPPacket* pIp = (IPPacket*)&sendBuf[ETH_LENGTH];
@@ -175,7 +155,7 @@ public:
 		pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, p1 - (BYTE*)pTcp); // TCP checksum
 
 		pcap_sendpacket(adapter.get(), (u_char*)sendBuf.get(), totalLen);
-		pTcp->seq = htonl(ntohl(pTcp->seq) + (totalLen - ETH_LENGTH - ipLen - tcpLen));
+		pTcp->seq = htonl(ntohl(pTcp->seq) + len);
 		///////////////////////////////////////////////////////////////////////////////////
 #pragma endregion
 
