@@ -42,6 +42,7 @@ public:
 	afx_msg void OnBnClickedCheck2();
 	afx_msg void OnEnKillfocusEdit1();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	afx_msg void OnBnClickedButton3();
 
 	HostInfoSetting* GetCurSelHost(int& index);
 
@@ -62,4 +63,6 @@ public:
 	CStatic m_statusStatic;
 
 	CButton m_attackButton;
+	CButton m_checkAllButton;
+	CButton m_autoCheckCheck;
 };

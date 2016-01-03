@@ -42,7 +42,7 @@ struct HostInfoSetting
 	// information
 	DWORD ip;
 	MacAddress mac;
-	DWORD send, receive;
+	DWORD send, receive, replace;
 
 	// image infomation
 	struct HttpImageLink
@@ -68,7 +68,7 @@ struct HostInfoSetting
 		ip = 0;
 		cheatTarget = cheatGateway = TRUE;
 		forward = TRUE;
-		send = receive = 0;
+		send = receive = replace = 0;
 		replaceImages = FALSE;
 		imageDataLen = 0;
 	}

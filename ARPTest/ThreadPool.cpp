@@ -37,10 +37,8 @@ ThreadPool::~ThreadPool()
 
 void ThreadPool::AddTask(std::unique_ptr<Task> task)
 {
-	{
 	std::lock_guard<std::mutex> lock(m_tasksLock);
 	m_tasks.emplace(std::move(task));
-	}
 	m_cond.notify_one();
 }
 
@@ -54,7 +52,7 @@ void ThreadPool::StopThreads()
 		m_cond.notify_all();
 		}
 		for (auto& thread : m_threads)
-			thread.join();
+			thread.join(); // tasks must return!
 		m_threads.clear();
 	}
 }

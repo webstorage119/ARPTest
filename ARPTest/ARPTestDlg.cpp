@@ -32,6 +32,8 @@ void CARPTestDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_STATIC1, m_statusStatic);
 	DDX_Control(pDX, IDC_CHECK3, m_cheatTargetCheck);
 	DDX_Control(pDX, IDC_CHECK4, m_cheatGatewayCheck);
+	DDX_Control(pDX, IDC_BUTTON3, m_checkAllButton);
+	DDX_Control(pDX, IDC_CHECK5, m_autoCheckCheck);
 }
 
 BEGIN_MESSAGE_MAP(CARPTestDlg, CDialog)
@@ -48,6 +50,7 @@ BEGIN_MESSAGE_MAP(CARPTestDlg, CDialog)
 	ON_BN_CLICKED(IDC_CHECK2, &CARPTestDlg::OnBnClickedCheck2)
 	ON_EN_KILLFOCUS(IDC_EDIT1, &CARPTestDlg::OnEnKillfocusEdit1)
 	ON_WM_TIMER()
+	ON_BN_CLICKED(IDC_BUTTON3, &CARPTestDlg::OnBnClickedButton3)
 END_MESSAGE_MAP()
 
 // 如果向对话框添加最小化按钮，则需要下面的代码
@@ -104,12 +107,14 @@ BOOL CARPTestDlg::OnInitDialog()
 
 	m_hostList.SetExtendedStyle(m_hostList.GetExtendedStyle() | LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_CHECKBOXES);
 	int i = 0;
-	m_hostList.InsertColumn(i++, "attack", LVCFMT_LEFT, 60);
-	m_hostList.InsertColumn(i++, "IP", LVCFMT_LEFT, 110);
+	m_hostList.InsertColumn(i++, "Attack", LVCFMT_LEFT, 60);
+	m_hostList.InsertColumn(i++, "IP", LVCFMT_LEFT, 120);
 	m_hostList.InsertColumn(i++, "MAC", LVCFMT_LEFT, 150);
-	m_hostList.InsertColumn(i++, "cheat", LVCFMT_LEFT, 60);
-	m_hostList.InsertColumn(i++, "forward", LVCFMT_LEFT, 65);
-	m_hostList.InsertColumn(i++, "replace images", LVCFMT_LEFT, 150);
+	m_hostList.InsertColumn(i++, "Cheat", LVCFMT_LEFT, 60);
+	m_hostList.InsertColumn(i++, "Forward", LVCFMT_LEFT, 65);
+	m_hostList.InsertColumn(i++, "Replace images", LVCFMT_LEFT, 150);
+
+	m_autoCheckCheck.SetCheck(TRUE);
 
 	// get device list
 	char errBuf[PCAP_ERRBUF_SIZE];
@@ -265,9 +270,10 @@ void CARPTestDlg::OnBnClickedButton2()
 				g_hostAttackListLock.unlock();
 
 				// add to list
+				int index = -1;
 				if (pak->senderIp != g_selfIp && pak->senderIp != g_selfGateway)
 				{
-					int index = dlg->m_hostList.GetItemCount();
+					index = dlg->m_hostList.GetItemCount();
 					dlg->m_hostList.InsertItem(index, "");
 					BYTE* bIp = (BYTE*)&pak->senderIp;
 					CString tmp;
@@ -275,7 +281,7 @@ void CARPTestDlg::OnBnClickedButton2()
 					dlg->m_hostList.SetItemText(index, 1, tmp);
 					dlg->m_hostList.SetItemText(index, 2, (CString)pak->senderMac);
 					dlg->m_hostList.SetItemText(index, 3, "↑↓");
-					dlg->m_hostList.SetItemText(index, 4, "true");
+					dlg->m_hostList.SetItemText(index, 4, "True");
 					dlg->m_hostList.SetItemData(index, (DWORD_PTR)pak->senderIp);
 				}
 				// add to g_host
@@ -287,6 +293,10 @@ void CARPTestDlg::OnBnClickedButton2()
 
 				if (pak->senderIp == g_selfGateway)
 					g_gatewayMac = pak->senderMac;
+
+				// auto check
+				if (index != -1 && dlg->m_autoCheckCheck.GetCheck())
+					dlg->m_hostList.SetCheck(index);
 			}
 			TRACE("scan end\n");
 		}
@@ -320,6 +330,7 @@ void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 			m_forwardCheck.SetCheck(host.forward);
 			m_replaceImagesCheck.SetCheck(host.replaceImages);
 			m_imagePathEdit.SetWindowText(host.imagePath);
+			OnTimer(0);
 			return;
 		}
 	}
@@ -410,7 +421,7 @@ void CARPTestDlg::OnBnClickedCheck1()
 	if (host == nullptr)
 		return;
 	host->forward = m_forwardCheck.GetCheck();
-	m_hostList.SetItemText(index, 4, host->forward ? "true" : "false");
+	m_hostList.SetItemText(index, 4, host->forward ? "True" : "False");
 }
 
 // replace images
@@ -462,11 +473,27 @@ void CARPTestDlg::OnTimer(UINT_PTR nIDEvent)
 		if (host == nullptr)
 			return;
 		CString status;
-		status.Format("send %u, receive %u", host->send, host->receive);
+		status.Format("Sent %u, Received %u, Replaced %u", host->send, host->receive, host->replace);
 		m_statusStatic.SetWindowText(status);
 	}
 
 	CDialog::OnTimer(nIDEvent);
+}
+
+// check all
+void CARPTestDlg::OnBnClickedButton3()
+{
+	BOOL check = FALSE;
+	for (int i = 0; i < m_hostList.GetItemCount(); i++)
+		if (!m_hostList.GetCheck(i))
+		{
+			check = TRUE;
+			m_hostList.SetCheck(i, TRUE);
+		}
+	// uncheck
+	if (!check)
+		for (int i = 0; i < m_hostList.GetItemCount(); i++)
+			m_hostList.SetCheck(i, FALSE);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -498,7 +525,7 @@ void CARPTestDlg::OnBnClickedButton1()
 			if (adapter == nullptr)
 				return;
 
-			dlg->m_attackButton.SetWindowText("stop");
+			dlg->m_attackButton.SetWindowText("Stop");
 			dlg->m_attackButton.EnableWindow(TRUE);
 			// start capture
 			std::thread packetHandleThread(PacketHandleThread);
@@ -552,7 +579,7 @@ void CARPTestDlg::OnBnClickedButton1()
 			// end
 			if (g_programRunning)
 			{
-				dlg->m_attackButton.SetWindowText("start");
+				dlg->m_attackButton.SetWindowText("Start");
 				dlg->m_attackButton.EnableWindow(TRUE);
 			}
 			TRACE("attack end\n");
