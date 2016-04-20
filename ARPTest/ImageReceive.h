@@ -1,9 +1,9 @@
 #pragma once
 #include "PacketHandler.h"
 #include "SyncMap.h"
+#include <set>
 #include <mutex>
 #include "TypeHelper.h"
-#include <fstream>
 
 
 class ImageReceive : public PacketHandler
@@ -16,9 +16,12 @@ public:
 		// image infomation used to receive image
 		struct ReceiveImageInfo
 		{
+			volatile int ref = 0;
+			bool shouldRelease = false;
 			DWORD startSeq = 1;
+			std::set<UINT> visitedPos;
 			int restContentLen = 0;
-			std::ofstream imageFile;
+			CFile imageFile;
 			std::mutex fileLock;
 		};
 		SyncMap<WORD, ReceiveImageInfo> receiveImageInfo; // port -> ReceiveImageInfo

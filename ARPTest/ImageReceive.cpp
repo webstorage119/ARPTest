@@ -90,6 +90,7 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 			return;
 		}
 		auto& receiveInfo = it->second;
+		receiveInfo.ref++;
 		IPPacket* pIp = (IPPacket*)&curPkt[ETH_LENGTH];
 		DWORD ipLen = pIp->headerLen * 4;
 		TCPPacket* pTcp = (TCPPacket*)&curPkt[ETH_LENGTH + ipLen];
@@ -99,7 +100,8 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 		if (pTcp->rst)
 		{
 			TRACE("receive image (%s:%u) RST!\n", (CString)targetIp, targetPort);
-			goto Release;
+			receiveInfo.shouldRelease = true;
+			goto End;
 		}
 
 		{ std::lock_guard<std::mutex> lock(receiveInfo.fileLock);
@@ -112,11 +114,17 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 				// get content length
 				char* pContentLength = strstr(pHttp, "Content-Length: ");
 				if (pContentLength == nullptr) // it should exist!
-					goto Release;
+				{
+					receiveInfo.shouldRelease = true;
+					goto End;
+				}
 				pContentLength += 16;
 				receiveInfo.restContentLen = atoi(pContentLength);
-				if (receiveInfo.restContentLen <= 0) // it should exist!
-					goto Release;
+				if (receiveInfo.restContentLen <= 0 || receiveInfo.restContentLen > 1024 * 1024 * 5) // impossible!
+				{
+					receiveInfo.shouldRelease = true;
+					goto End;
+				}
 				TRACE("restContentLen = %d\n", receiveInfo.restContentLen);
 
 				// discard the HTTP header
@@ -132,8 +140,20 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 				}
 			}
 
+			TRACE("filePos = %u\n", filePos);
+			if (filePos > 1024 * 1024 * 5) // impossible!
+			{
+				TRACE("receive image (%s:%u) filePos invalid\n", (CString)targetIp, targetPort);
+				receiveInfo.shouldRelease = true;
+				goto End;
+			}
+			// visited?
+			if (receiveInfo.visitedPos.find(filePos) != receiveInfo.visitedPos.end())
+				goto End;
+			receiveInfo.visitedPos.insert(filePos);
+
 			// open file
-			if (!receiveInfo.imageFile.is_open())
+			if (receiveInfo.imageFile.m_hFile == CFile::hFileNull)
 			{
 				CreateDirs("image\\" + (CString)targetIp);
 				DWORD time = GetTickCount();
@@ -141,17 +161,16 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 				for (int i = 0; i < 10; i++)
 				{
 					name.Format("image\\%s\\%u.jpg", (CString)targetIp, time + i);
-					receiveInfo.imageFile.open(name, std::ios::out | std::ios::trunc | std::ios::binary);
-					if (receiveInfo.imageFile.is_open())
+					if (receiveInfo.imageFile.Open(name, CFile::modeCreate | CFile::modeWrite))
 						break;
 				}
-				if (!receiveInfo.imageFile.is_open())
+				if (receiveInfo.imageFile.m_hFile == CFile::hFileNull)
 					return;
 			}
 
 			// write to file
-			receiveInfo.imageFile.seekp(filePos, std::ios::beg);
-			receiveInfo.imageFile.write(pHttp, httpLen);
+			receiveInfo.imageFile.Seek(filePos, CFile::begin);
+			receiveInfo.imageFile.Write(pHttp, httpLen);
 			receiveInfo.restContentLen -= httpLen;
 			TRACE("new restContentLen = %d\n", receiveInfo.restContentLen);
 		}
@@ -160,7 +179,7 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 		{
 			AdapterHandle adapter(GetAdapterHandle());
 			if (adapter == nullptr)
-				return;
+				goto End;
 
 			std::unique_ptr<BYTE[]> ackPkt(new BYTE[ETH_LENGTH + ipLen + tcpLen]);
 			*(MacAddress*)ackPkt.get() = g_netManager.m_gatewayMac;
@@ -183,17 +202,18 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 			pcap_sendpacket(adapter.get(), (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
 		}
 
-		// release
+		// finish
 		if (receiveInfo.restContentLen <= 0)
 		{
-			TRACE("receive image (%s:%u) finish\n", (CString)targetIp, targetPort);
-			goto Release;
+			receiveInfo.shouldRelease = true;
+			goto End;
 		}
-		/*else
-			TRACE("receive image (%s:%u) end\n", (CString)targetIp, targetPort);*/
-		return;
 
-	Release:
-		target.receiveImageInfo.erase(targetPort);
+	End:
+		if (--receiveInfo.ref <= 0 && receiveInfo.shouldRelease)
+		{
+			TRACE("receive image (%s:%u) finish\n", (CString)targetIp, targetPort);
+			target.receiveImageInfo.erase(targetPort);
+		}
 	});
 }
