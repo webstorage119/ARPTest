@@ -104,22 +104,34 @@
     </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="ARPCheat.h" />
     <ClInclude Include="ARPTest.h" />
     <ClInclude Include="ARPTestDlg.h" />
+    <ClInclude Include="ImageReceive.h" />
+    <ClInclude Include="ImageReplace.h" />
+    <ClInclude Include="NetManager.h" />
     <ClInclude Include="MITM.h" />
     <ClInclude Include="Helper.h" />
     <ClInclude Include="Packet.h" />
+    <ClInclude Include="PacketHandler.h" />
+    <ClInclude Include="PacketHandlers.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="SyncMap.h" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="ThreadPool.h" />
     <ClInclude Include="TypeHelper.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="ARPCheat.cpp" />
     <ClCompile Include="ARPTest.cpp" />
     <ClCompile Include="ARPTestDlg.cpp" />
+    <ClCompile Include="ImageReceive.cpp" />
+    <ClCompile Include="ImageReplace.cpp" />
     <ClCompile Include="MITM.cpp" />
     <ClCompile Include="Helper.cpp" />
+    <ClCompile Include="NetManager.cpp" />
+    <ClCompile Include="PacketHandlers.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>

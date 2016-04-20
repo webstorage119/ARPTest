@@ -4,7 +4,7 @@
 
 #pragma once
 #include "afxwin.h"
-struct HostInfoSetting;
+#include "TypeHelper.h"
 
 
 // CARPTestDlg ¶Ô»°¿ò
@@ -44,7 +44,7 @@ public:
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg void OnBnClickedButton3();
 
-	HostInfoSetting* GetCurSelHost(int& index);
+	IpAddress GetCurSelIp(int& index);
 
 
 public:

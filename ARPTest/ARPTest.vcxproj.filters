@@ -13,12 +13,33 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="源文件\UI">
+      <UniqueIdentifier>{7d507fc8-4d33-49c8-90ed-b8ca1a9bf3ee}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\UI">
+      <UniqueIdentifier>{b17c7709-f503-4fbb-b3a4-a6a3b5ff2138}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\Helper">
+      <UniqueIdentifier>{576f813d-cb2d-485c-8c7b-e14dde864d6c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\Helper">
+      <UniqueIdentifier>{6f62e2a2-020b-45cb-a8d5-41b803ac32ac}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\Core">
+      <UniqueIdentifier>{c1d72813-f813-4794-8213-b256818c7b28}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\Core">
+      <UniqueIdentifier>{f0ecbddd-0bab-4d8d-ae5b-5903a5409765}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\PacketHandler">
+      <UniqueIdentifier>{8fda03c9-1d87-4923-a96a-e3263a1bbac6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\PacketHandler">
+      <UniqueIdentifier>{bb861e0f-f821-4a24-af36-f73e5c572e13}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ARPTest.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="ARPTestDlg.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="stdafx.h">
@@ -30,40 +51,79 @@
     <ClInclude Include="Resource.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="Packet.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="TypeHelper.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="ARPTestDlg.h">
+      <Filter>头文件\UI</Filter>
     </ClInclude>
     <ClInclude Include="Helper.h">
-      <Filter>头文件</Filter>
+      <Filter>头文件\Helper</Filter>
     </ClInclude>
-    <ClInclude Include="MITM.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="Packet.h">
+      <Filter>头文件\Helper</Filter>
     </ClInclude>
     <ClInclude Include="ThreadPool.h">
-      <Filter>头文件</Filter>
+      <Filter>头文件\Helper</Filter>
+    </ClInclude>
+    <ClInclude Include="TypeHelper.h">
+      <Filter>头文件\Helper</Filter>
+    </ClInclude>
+    <ClInclude Include="MITM.h">
+      <Filter>头文件\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="NetManager.h">
+      <Filter>头文件\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="ARPCheat.h">
+      <Filter>头文件\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="PacketHandler.h">
+      <Filter>头文件\PacketHandler</Filter>
+    </ClInclude>
+    <ClInclude Include="ImageReplace.h">
+      <Filter>头文件\PacketHandler</Filter>
+    </ClInclude>
+    <ClInclude Include="SyncMap.h">
+      <Filter>头文件\Helper</Filter>
+    </ClInclude>
+    <ClInclude Include="PacketHandlers.h">
+      <Filter>头文件\PacketHandler</Filter>
+    </ClInclude>
+    <ClInclude Include="ImageReceive.h">
+      <Filter>头文件\PacketHandler</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ARPTest.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="ARPTestDlg.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="stdafx.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="ARPTestDlg.cpp">
+      <Filter>源文件\UI</Filter>
+    </ClCompile>
     <ClCompile Include="Helper.cpp">
-      <Filter>源文件</Filter>
+      <Filter>源文件\Helper</Filter>
     </ClCompile>
     <ClCompile Include="MITM.cpp">
-      <Filter>源文件</Filter>
+      <Filter>源文件\Core</Filter>
     </ClCompile>
     <ClCompile Include="ThreadPool.cpp">
-      <Filter>源文件</Filter>
+      <Filter>源文件\Helper</Filter>
+    </ClCompile>
+    <ClCompile Include="NetManager.cpp">
+      <Filter>源文件\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="ARPCheat.cpp">
+      <Filter>源文件\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="ImageReplace.cpp">
+      <Filter>源文件\PacketHandler</Filter>
+    </ClCompile>
+    <ClCompile Include="PacketHandlers.cpp">
+      <Filter>源文件\PacketHandler</Filter>
+    </ClCompile>
+    <ClCompile Include="ImageReceive.cpp">
+      <Filter>源文件\PacketHandler</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

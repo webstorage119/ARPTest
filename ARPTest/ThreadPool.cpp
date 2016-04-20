@@ -2,6 +2,9 @@
 #include "ThreadPool.h"
 
 
+ThreadPool g_threadPool(100);
+
+
 void ThreadPool::Thread()
 {
 	while (true)
@@ -15,11 +18,11 @@ void ThreadPool::Thread()
 			break;
 		if (m_tasks.empty())
 			continue;
-		std::unique_ptr<Task> task(std::move(m_tasks.front()));
+		std::function<void()> task(std::move(m_tasks.front()));
 		m_tasks.pop();
 		lock.unlock();
 
-		task->Run();
+		task();
 	}
 }
 
@@ -35,10 +38,12 @@ ThreadPool::~ThreadPool()
 	StopThreads();
 }
 
-void ThreadPool::AddTask(std::unique_ptr<Task> task)
+void ThreadPool::AddTask(std::function<void()>&& task)
 {
 	std::lock_guard<std::mutex> lock(m_tasksLock);
-	m_tasks.emplace(std::move(task));
+	if (m_tasks.size() > 1)
+		TRACE("%u tasks is waiting\n", m_tasks.size());
+	m_tasks.emplace(task);
 	m_cond.notify_one();
 }
 
@@ -54,5 +59,7 @@ void ThreadPool::StopThreads()
 		for (auto& thread : m_threads)
 			thread.join(); // tasks must return!
 		m_threads.clear();
+
+		TRACE("threads end\n");
 	}
 }

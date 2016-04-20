@@ -17,6 +17,8 @@
 // 关闭 MFC 对某些常见但经常可放心忽略的警告消息的隐藏
 //#define _AFX_ALL_WARNINGS
 
+#define NO_WARN_MBCS_MFC_DEPRECATION
+
 #include <afxwin.h>         // MFC 核心组件和标准组件
 #include <afxext.h>         // MFC 扩展
 

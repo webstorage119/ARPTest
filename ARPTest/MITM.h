@@ -1,28 +1,54 @@
 #pragma once
-#include <map>
+#include "SyncMap.h"
 #include <memory>
-#include <mutex>
-#include <pcap.h>
+#include <functional>
 #include "TypeHelper.h"
-#include "ThreadPool.h"
+#include "ARPCheat.h"
+#include <vector>
+#include "PacketHandler.h"
 
 
-extern volatile BOOL g_programRunning;
-extern volatile BOOL g_attacking;
+class MITM
+{
+private:
+	MITM() = default;
 
-extern pcap_if_t* g_deviceList;
-extern pcap_if_t* g_adapter;
-extern DWORD g_selfIp;
-extern MacAddress g_selfMac;
-extern DWORD g_selfGateway;
-extern MacAddress g_gatewayMac;
+public:
+	static MITM& GetInstance()
+	{
+		static MITM instance;
+		return instance;
+	}
 
-extern std::map<DWORD, HostInfoSetting> g_host; // IP -> HostInfoSetting
-extern std::map<DWORD, HostInfoSetting*> g_attackList; // IP -> HostInfoSetting
-extern std::map<MacAddress, HostInfoSetting*> g_attackListMac; // MAC -> HostInfoSetting
-extern std::mutex g_hostAttackListLock; // for g_host g_attackList g_attackListMac
+	std::unique_ptr<ARPCheat> m_arpCheat = std::unique_ptr<ARPCheat>(new ARPCheat());
 
-extern ThreadPool g_threadPool;
+	struct Config
+	{
+		bool forward = true;
+		UINT send = 0;
+		UINT receive = 0;
+	};
+	Config& GetConfig(IpAddress ip);
+	void SetConfig(IpAddress ip, bool forward);
 
+	bool IsAttacking()
+	{
+		return m_isAttacking;
+	}
+	void StartAttack(std::function<void()> onThreadStart, std::function<void()> onThreadEnd);
+	void StopAttack();
 
-void PacketHandleThread();
+	void AddPacketHandler(PacketHandler* packetHandler);
+
+protected:
+	volatile bool m_isAttacking = false;
+
+	SyncMap<IpAddress, std::shared_ptr<Config> > m_attackList; // IP -> Config
+	SyncMap<MacAddress, std::shared_ptr<Config> > m_attackListMac; // MAC -> Config
+
+	std::vector<PacketHandler*> m_packetHandlers;
+	
+	void PacketHandleThread();
+};
+
+extern MITM& g_mitm;

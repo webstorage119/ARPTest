@@ -24,11 +24,11 @@ struct ARPPacket
 	BYTE protocolSize;			// 4 IP
 	WORD opcode;				// 0x0100 request, 0x0200 reply
 	MacAddress senderMac;
-	DWORD senderIp;
+	IpAddress senderIp;
 	MacAddress targetMac;
-	DWORD targetIp;
+	IpAddress targetIp;
 
-	ARPPacket(BOOL request)
+	ARPPacket(bool request)
 	{
 		type = PROTOCOL_ARP;
 		hardwareType = 0x0100;
@@ -36,8 +36,6 @@ struct ARPPacket
 		hardwareSize = 6;
 		protocolSize = 4;
 		opcode = request ? ARP_OPCODE_REQUEST : ARP_OPCODE_REPLY;
-		senderIp = 0;
-		targetIp = 0;
 	}
 
 	void SetSender(DWORD ip, const MacAddress& mac)
@@ -65,8 +63,8 @@ struct IPPacket
 	BYTE timeToLive;
 	BYTE protocol;				// 6 TCP
 	WORD checkSum;
-	DWORD sourceIp;
-	DWORD destinationIp;
+	IpAddress sourceIp;
+	IpAddress destinationIp;
 	//BYTE options[1];
 
 	void CalcCheckSum()

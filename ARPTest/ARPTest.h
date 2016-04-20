@@ -27,6 +27,10 @@ public:
 // й╣ож
 
 	DECLARE_MESSAGE_MAP()
+
+public:
+	// is program running
+	bool m_isRunning = true;
 };
 
 extern CARPTestApp theApp;

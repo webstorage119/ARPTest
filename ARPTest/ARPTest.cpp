@@ -66,21 +66,7 @@ BOOL CARPTestApp::InitInstance()
 
 	CARPTestDlg dlg;
 	m_pMainWnd = &dlg;
-	INT_PTR nResponse = dlg.DoModal();
-	if (nResponse == IDOK)
-	{
-		// TODO:  在此放置处理何时用
-		//  “确定”来关闭对话框的代码
-	}
-	else if (nResponse == IDCANCEL)
-	{
-		// TODO:  在此放置处理何时用
-		//  “取消”来关闭对话框的代码
-	}
-	else if (nResponse == -1)
-	{
-		TRACE(traceAppMsg, 0, "警告: 对话框创建失败，应用程序将意外终止。\n");
-	}
+	dlg.DoModal();
 
 
 	// 由于对话框已关闭，所以将返回 FALSE 以便退出应用程序，

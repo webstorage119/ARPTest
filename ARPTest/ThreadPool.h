@@ -1,25 +1,18 @@
 #pragma once
-
 #include <queue>
 #include <memory>
 #include <mutex>
 #include <condition_variable>
+#include <functional>
 #include <thread>
 #include <vector>
 #include <atomic>
 
 
-class Task
-{
-public:
-	virtual ~Task() {}
-	virtual void Run() = 0;
-};
-
 class ThreadPool
 {
 protected:
-	std::queue<std::unique_ptr<Task> > m_tasks;
+	std::queue<std::function<void()> > m_tasks;
 	std::mutex m_tasksLock;
 	std::condition_variable m_cond;
 	std::vector<std::thread> m_threads;
@@ -31,6 +24,8 @@ public:
 	ThreadPool(int nThreads);
 	~ThreadPool();
 
-	void AddTask(std::unique_ptr<Task> task);
+	void AddTask(std::function<void()>&& task);
 	void StopThreads();
 };
+
+extern ThreadPool g_threadPool;

