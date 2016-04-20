@@ -23,7 +23,7 @@ public:
 	IpAddress m_selfGateway;
 	MacAddress m_gatewayMac;
 
-	// IpAddress -> MacAddress, all hosts in the local network
+	// IpAddress -> MacAddress, all hosts on the local network
 	SyncMap<IpAddress, MacAddress> m_host;
 
 	bool Init(char* errBuf);
