@@ -38,5 +38,5 @@ bool CreateDirs(const CString& path)
 		if (!CreateDirs(parent))
 			return false;
 	}
-	return CreateDirectory(path, NULL);
+	return CreateDirectory(path, NULL) != 0;
 }

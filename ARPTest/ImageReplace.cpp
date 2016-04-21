@@ -61,7 +61,7 @@ bool ImageReplace::OnGatewayPacket(const pcap_pkthdr* header, const BYTE* pkt_da
 
 	DWORD tcpLength = pTcp->headerLen * 4;
 	// not HTTP
-	if (strncmp((LPCSTR)&pkt_data[ETH_LENGTH + ipLength + tcpLength], "HTTP/1.", strlen("HTTP/1.")) != 0)
+	if (strncmp((LPCSTR)&pkt_data[ETH_LENGTH + ipLength + tcpLength], "HTTP/1.", 7) != 0)
 		return true;
 
 	LPCSTR http = (LPCSTR)&pkt_data[ETH_LENGTH + ipLength + tcpLength];

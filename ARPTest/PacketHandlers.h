@@ -1,5 +1,6 @@
 #pragma once
 #include "MITM.h"
+#include "HttpDowngrade.h"
 #include "ImageReceive.h"
 #include "ImageReplace.h"
 
@@ -15,12 +16,14 @@ public:
 		return instance;
 	}
 	
-	ImageReceive imageReceive;
+	HttpDowngrade httpDowngrade;
+	//ImageReceive imageReceive; // BUG
 	ImageReplace imageReplace;
 
 	void Init()
 	{
-		g_mitm.AddPacketHandler(&imageReceive);
+		g_mitm.AddPacketHandler(&httpDowngrade);
+		//g_mitm.AddPacketHandler(&imageReceive); // BUG
 		g_mitm.AddPacketHandler(&imageReplace);
 	}
 };

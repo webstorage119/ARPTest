@@ -90,6 +90,9 @@
     <ClInclude Include="ImageReceive.h">
       <Filter>头文件\PacketHandler</Filter>
     </ClInclude>
+    <ClInclude Include="HttpDowngrade.h">
+      <Filter>头文件\PacketHandler</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ARPTest.cpp">
@@ -123,6 +126,9 @@
       <Filter>源文件\PacketHandler</Filter>
     </ClCompile>
     <ClCompile Include="ImageReceive.cpp">
+      <Filter>源文件\PacketHandler</Filter>
+    </ClCompile>
+    <ClCompile Include="HttpDowngrade.cpp">
       <Filter>源文件\PacketHandler</Filter>
     </ClCompile>
   </ItemGroup>

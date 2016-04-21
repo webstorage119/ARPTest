@@ -1,5 +1,7 @@
 #pragma once
 #include <pcap.h>
+#include <memory>
+
 
 class PacketHandler
 {
@@ -17,4 +19,9 @@ public:
 	{
 		return true;
 	}
+
+	// modify the packet from target
+	virtual void OnTargetForward(std::unique_ptr<BYTE[]>& data, UINT& len) { }
+	// modify the packet from gateway
+	virtual void OnGatewayForward(std::unique_ptr<BYTE[]>& data, UINT& len) { }
 };

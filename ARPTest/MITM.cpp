@@ -113,11 +113,17 @@ void MITM::PacketHandleThread()
 
 			if (forward)
 			{
-				std::unique_ptr<BYTE[]> newData(new BYTE[header->len]);
+				UINT len = header->len;
+				std::unique_ptr<BYTE[]> newData(new BYTE[len]);
 				*(MacAddress*)newData.get() = g_netManager.m_gatewayMac; // destination MAC
 				*(MacAddress*)(newData.get() + 6) = g_netManager.m_selfMac; // source MAC
 				memcpy(newData.get() + 12, pkt_data + 12, header->len - 12); // data
-				pcap_sendpacket(adapter.get(), (u_char*)newData.get(), header->len);
+
+				// call packet handlers
+				for (auto i : m_packetHandlers)
+					i->OnTargetForward(newData, len);
+
+				pcap_sendpacket(adapter.get(), (u_char*)newData.get(), len);
 			}
 			continue;
 		}
@@ -140,11 +146,17 @@ void MITM::PacketHandleThread()
 			
 			if (forward)
 			{
-				std::unique_ptr<BYTE[]> newData(new BYTE[header->len]);
+				UINT len = header->len;
+				std::unique_ptr<BYTE[]> newData(new BYTE[len]);
 				*(MacAddress*)newData.get() = g_netManager.m_host[targetIt->first]; // destination MAC
 				*(MacAddress*)(newData.get() + 6) = g_netManager.m_selfMac; // source MAC
 				memcpy(newData.get() + 12, pkt_data + 12, header->len - 12); // data
-				pcap_sendpacket(adapter.get(), (u_char*)newData.get(), header->len);
+
+				// call packet handlers
+				for (auto i : m_packetHandlers)
+					i->OnGatewayForward(newData, len);
+
+				pcap_sendpacket(adapter.get(), (u_char*)newData.get(), len);
 			}
 		}
 		// gateway packet end
