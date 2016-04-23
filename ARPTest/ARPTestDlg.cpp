@@ -141,6 +141,15 @@ BOOL CARPTestDlg::OnInitDialog()
 	m_autoCheckCheck.SetCheck(TRUE);
 
 
+	// init other modules
+	g_mitm.init();
+	g_mitm.m_arpCheat->init();
+	g_packetHandlers.imageReplace.init();
+
+	// init on new host callback
+	g_netManager.AddOnNewHostCallback(std::bind(&CARPTestDlg::OnNewHost, this, std::placeholders::_1, std::placeholders::_2));
+
+
 	// get device list
 	char errBuf[PCAP_ERRBUF_SIZE];
 	if (!g_netManager.Init(errBuf))
@@ -163,9 +172,6 @@ BOOL CARPTestDlg::OnInitDialog()
 	}
 	m_deviceDescList.SetCurSel(0);
 	OnLbnSelchangeList1();
-
-	// init packet handlers
-	g_packetHandlers.Init();
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -207,33 +213,32 @@ void CARPTestDlg::OnBnClickedButton2()
 	m_attackButton.EnableWindow(TRUE);
 	SetTimer(0, 3000, NULL);
 	
-	g_netManager.StartScanHost([this](IpAddress ip, MacAddress mac){
-		// add to list
-		int index = -1;
-		if (ip != g_netManager.m_selfIp && ip != g_netManager.m_selfGateway)
-		{
-			auto& arpCheatConfig = g_mitm.m_arpCheat->GetConfig(ip);
-			auto& mitmConfig = g_mitm.GetConfig(ip);
-			auto& imageReplaceConfig = g_packetHandlers.imageReplace.GetConfig(ip);
+	g_netManager.StartScanHost();
+}
 
-			index = m_hostList.GetItemCount();
-			m_hostList.InsertItem(index, "");
-			m_hostList.SetItemText(index, 1, (CString)ip);
-			m_hostList.SetItemText(index, 2, (CString)mac);
-			CString tmp;
-			if (arpCheatConfig.cheatTarget)
-				tmp += "↑";
-			if (arpCheatConfig.cheatGateway)
-				tmp += "↓";
-			m_hostList.SetItemText(index, 3, tmp);
-			m_hostList.SetItemText(index, 4, mitmConfig.forward ? "True" : "False");
-			m_hostList.SetItemData(index, (DWORD_PTR)ip);
-		}
+// add new host to list
+void CARPTestDlg::OnNewHost(IpAddress ip, MacAddress mac)
+{
+	// add to list
+	auto& arpCheatConfig = g_mitm.m_arpCheat->GetConfig(ip);
+	auto& mitmConfig = g_mitm.GetConfig(ip);
 
-		// auto check
-		if (index != -1 && m_autoCheckCheck.GetCheck())
-			m_hostList.SetCheck(index);
-	});
+	int index = m_hostList.GetItemCount();
+	m_hostList.InsertItem(index, "");
+	m_hostList.SetItemText(index, 1, (CString)ip);
+	m_hostList.SetItemText(index, 2, (CString)mac);
+	CString tmp;
+	if (arpCheatConfig.cheatTarget)
+		tmp += "↑";
+	if (arpCheatConfig.cheatGateway)
+		tmp += "↓";
+	m_hostList.SetItemText(index, 3, tmp);
+	m_hostList.SetItemText(index, 4, mitmConfig.forward ? "True" : "False");
+	m_hostList.SetItemData(index, (DWORD_PTR)ip);
+
+	// auto check
+	if (m_autoCheckCheck.GetCheck())
+		m_hostList.SetCheck(index);
 }
 
 #pragma region Host Config
@@ -427,7 +432,7 @@ void CARPTestDlg::OnBnClickedButton3()
 /////////////////////////////////////////////////////////////////////////////////////////
 #pragma endregion
 
-// start / stop and send ARP packet
+// start / stop attacking
 void CARPTestDlg::OnBnClickedButton1()
 {
 	if (g_mitm.IsAttacking())

@@ -29,6 +29,14 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include <string>
 
 
+void ImageReplace::init()
+{
+	g_netManager.AddOnNewHostCallback([this](IpAddress ip, MacAddress mac){
+		// add new host config
+		GetConfig(ip);
+	});
+}
+
 bool ImageReplace::OnTargetPacket(const pcap_pkthdr* header, const BYTE* pkt_data)
 {
 	// check if is replacing

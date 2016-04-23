@@ -16,15 +16,15 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-//  HttpDowngrade.cpp: force hosts to use HTTP 1.0 and no encoding.
+//  HttpNoEncoding.cpp: force hosts not to use encoding.
 //
 
 #include "stdafx.h"
-#include "HttpDowngrade.h"
+#include "HttpNoEncoding.h"
 #include "Packet.h"
 
 
-void HttpDowngrade::OnTargetForward(std::unique_ptr<BYTE[]>& data, UINT& len)
+void HttpNoEncoding::OnTargetForward(std::unique_ptr<BYTE[]>& data, UINT& len)
 {
 	IPPacket* pIp = (IPPacket*)&data[ETH_LENGTH];
 	// not TCP
@@ -39,25 +39,11 @@ void HttpDowngrade::OnTargetForward(std::unique_ptr<BYTE[]>& data, UINT& len)
 	if (strncmp(pData, "GET ", 4) != 0 && strncmp(pData, "POST ", 5) != 0)
 		return;
 
-	bool modified = false;
-
-	// downgrade to HTTP 1.0
-	// it seems useless. servers don't always use HTTP 1.0
-	/*char* pHttp = strstr(pData, " HTTP/1.1\r\n");
-	if (pHttp != nullptr)
-	{
-		pHttp[8] = '0';
-		modified = true;
-	}*/
-
 	// no encoding!
 	char* pAcceptEncoding = strstr(pData, "Accept-Encoding: ");
 	if (pAcceptEncoding != nullptr)
 	{
 		memcpy(pAcceptEncoding, "Accept-Rubbish!: ", 17);
-		modified = true;
-	}
-
-	if (modified)
 		pTcp->CalcCheckSum(pIp->sourceIp, pIp->destinationIp, data.get() + len - (BYTE*)pTcp);
+	}
 }

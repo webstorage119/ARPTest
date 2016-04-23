@@ -21,6 +21,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "stdafx.h"
 #include "MITM.h"
+#include "PacketHandler.h"
 #include <pcap.h>
 #include <thread>
 #include "Helper.h"
@@ -31,6 +32,14 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 MITM& g_mitm = MITM::GetInstance();
 
+
+void MITM::init()
+{
+	g_netManager.AddOnNewHostCallback([this](IpAddress ip, MacAddress mac){
+		// add new host config
+		GetConfig(ip);
+	});
+}
 
 MITM::Config& MITM::GetConfig(IpAddress ip)
 {

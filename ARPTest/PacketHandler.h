@@ -1,4 +1,5 @@
 #pragma once
+#include "MITM.h"
 #include <pcap.h>
 #include <memory>
 
@@ -6,6 +7,11 @@
 class PacketHandler
 {
 public:
+	PacketHandler()
+	{
+		g_mitm.AddPacketHandler(this);
+	}
+
 	virtual ~PacketHandler() { }
 
 	// return false to stop forwarding

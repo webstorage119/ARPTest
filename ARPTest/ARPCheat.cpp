@@ -27,6 +27,14 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "Packet.h"
 
 
+void ARPCheat::init()
+{
+	g_netManager.AddOnNewHostCallback([this](IpAddress ip, MacAddress mac){
+		// add new host config
+		GetConfig(ip);
+	});
+}
+
 ARPCheat::Config& ARPCheat::GetConfig(IpAddress ip)
 {
 	return m_attackList[ip];
@@ -88,6 +96,7 @@ void ARPCheat::StartAttack()
 						continue;
 					if (i.second.cheatTarget) // send to target
 					{
+						TRACE("%s\n", (CString)i.first);
 						packet.SetTarget(i.first, g_netManager.m_host[i.first]);
 						packet.senderIp = g_netManager.m_selfGateway;
 						pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));

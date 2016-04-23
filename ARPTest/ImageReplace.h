@@ -9,6 +9,8 @@
 class ImageReplace : public PacketHandler
 {
 public:
+	void init();
+
 	bool OnTargetPacket(const pcap_pkthdr* header, const BYTE* pkt_data);
 	bool OnGatewayPacket(const pcap_pkthdr* header, const BYTE* pkt_data);
 

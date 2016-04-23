@@ -2,6 +2,7 @@
 #include <pcap.h>
 #include "SyncMap.h"
 #include "TypeHelper.h"
+#include <vector>
 #include <functional>
 
 class NetManager
@@ -32,7 +33,12 @@ public:
 	// called when user selects an adapter. get information and fill variables
 	bool SelectAdapter(int index);
 	// start a thread to scan hosts
-	void StartScanHost(std::function<void(IpAddress, MacAddress)> onNewHost);
+	void StartScanHost();
+
+	void AddOnNewHostCallback(std::function<void(IpAddress, MacAddress)> callback);
+
+protected:
+	std::vector<std::function<void(IpAddress, MacAddress)> > m_onNewHostCallback;
 };
 
 extern NetManager& g_netManager;

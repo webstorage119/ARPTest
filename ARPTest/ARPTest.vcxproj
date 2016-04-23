@@ -107,7 +107,7 @@
     <ClInclude Include="ARPCheat.h" />
     <ClInclude Include="ARPTest.h" />
     <ClInclude Include="ARPTestDlg.h" />
-    <ClInclude Include="HttpDowngrade.h" />
+    <ClInclude Include="HttpNoEncoding.h" />
     <ClInclude Include="ImageReceive.h" />
     <ClInclude Include="ImageReplace.h" />
     <ClInclude Include="NetManager.h" />
@@ -127,7 +127,7 @@
     <ClCompile Include="ARPCheat.cpp" />
     <ClCompile Include="ARPTest.cpp" />
     <ClCompile Include="ARPTestDlg.cpp" />
-    <ClCompile Include="HttpDowngrade.cpp" />
+    <ClCompile Include="HttpNoEncoding.cpp" />
     <ClCompile Include="ImageReceive.cpp" />
     <ClCompile Include="ImageReplace.cpp" />
     <ClCompile Include="MITM.cpp" />

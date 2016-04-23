@@ -1,6 +1,5 @@
 #pragma once
-#include "MITM.h"
-#include "HttpDowngrade.h"
+#include "HttpNoEncoding.h"
 #include "ImageReceive.h"
 #include "ImageReplace.h"
 
@@ -16,16 +15,9 @@ public:
 		return instance;
 	}
 	
-	HttpDowngrade httpDowngrade;
+	HttpNoEncoding httpNoEncoding;
 	//ImageReceive imageReceive; // BUG
 	ImageReplace imageReplace;
-
-	void Init()
-	{
-		g_mitm.AddPacketHandler(&httpDowngrade);
-		//g_mitm.AddPacketHandler(&imageReceive); // BUG
-		g_mitm.AddPacketHandler(&imageReplace);
-	}
 };
 
 extern PacketHandlers& g_packetHandlers;

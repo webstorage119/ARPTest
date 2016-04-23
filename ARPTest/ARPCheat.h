@@ -7,6 +7,8 @@
 class ARPCheat
 {
 public:
+	void init();
+
 	struct Config
 	{
 		bool attack = true;

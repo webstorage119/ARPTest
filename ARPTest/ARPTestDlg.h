@@ -44,6 +44,7 @@ public:
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg void OnBnClickedButton3();
 
+	void OnNewHost(IpAddress ip, MacAddress mac);
 	IpAddress GetCurSelIp(int& index);
 
 

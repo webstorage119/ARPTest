@@ -83,7 +83,7 @@ bool NetManager::SelectAdapter(int index)
 	return true;
 }
 
-void NetManager::StartScanHost(std::function<void(IpAddress, MacAddress)> onNewHost)
+void NetManager::StartScanHost()
 {
 	g_threadPool.AddTask([=]{
 		AdapterHandle adapter(GetAdapterHandle());
@@ -138,8 +138,15 @@ void NetManager::StartScanHost(std::function<void(IpAddress, MacAddress)> onNewH
 				m_gatewayMac = pak->senderMac;
 
 			// callback
-			onNewHost(pak->senderIp, pak->senderMac);
+			if (pak->senderIp != m_selfIp && pak->senderIp != m_selfGateway)
+				for (const auto& i : m_onNewHostCallback)
+					i(pak->senderIp, pak->senderMac);
 		}
 		TRACE("scan end\n");
 	});
+}
+
+void NetManager::AddOnNewHostCallback(std::function<void(IpAddress, MacAddress)> callback)
+{
+	m_onNewHostCallback.push_back(std::move(callback));
 }

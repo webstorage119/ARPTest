@@ -90,7 +90,7 @@
     <ClInclude Include="ImageReceive.h">
       <Filter>头文件\PacketHandler</Filter>
     </ClInclude>
-    <ClInclude Include="HttpDowngrade.h">
+    <ClInclude Include="HttpNoEncoding.h">
       <Filter>头文件\PacketHandler</Filter>
     </ClInclude>
   </ItemGroup>
@@ -128,7 +128,7 @@
     <ClCompile Include="ImageReceive.cpp">
       <Filter>源文件\PacketHandler</Filter>
     </ClCompile>
-    <ClCompile Include="HttpDowngrade.cpp">
+    <ClCompile Include="HttpNoEncoding.cpp">
       <Filter>源文件\PacketHandler</Filter>
     </ClCompile>
   </ItemGroup>

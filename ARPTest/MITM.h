@@ -5,7 +5,7 @@
 #include "TypeHelper.h"
 #include "ARPCheat.h"
 #include <vector>
-#include "PacketHandler.h"
+class PacketHandler;
 
 
 class MITM
@@ -19,6 +19,7 @@ public:
 		static MITM instance;
 		return instance;
 	}
+	void init();
 
 	std::unique_ptr<ARPCheat> m_arpCheat = std::unique_ptr<ARPCheat>(new ARPCheat());
 

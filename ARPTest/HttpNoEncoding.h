@@ -2,7 +2,7 @@
 #include "PacketHandler.h"
 
 
-class HttpDowngrade : public PacketHandler
+class HttpNoEncoding : public PacketHandler
 {
 public:
 	void OnTargetForward(std::unique_ptr<BYTE[]>& data, UINT& len);
