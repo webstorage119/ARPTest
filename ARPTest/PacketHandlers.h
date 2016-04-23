@@ -16,7 +16,7 @@ public:
 	}
 	
 	HttpNoEncoding httpNoEncoding;
-	//ImageReceive imageReceive; // BUG
+	ImageReceive imageReceive;
 	ImageReplace imageReplace;
 };
 

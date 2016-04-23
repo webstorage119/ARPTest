@@ -1,5 +1,6 @@
 #pragma once
 #include "SyncMap.h"
+#include <atomic>
 #include <memory>
 #include <functional>
 #include "TypeHelper.h"
@@ -11,7 +12,11 @@ class PacketHandler;
 class MITM
 {
 private:
-	MITM() = default;
+	MITM()
+		: m_arpCheat(new ARPCheat())
+	{
+		m_isAttacking = false;
+	}
 
 public:
 	static MITM& GetInstance()
@@ -21,7 +26,7 @@ public:
 	}
 	void init();
 
-	std::unique_ptr<ARPCheat> m_arpCheat = std::unique_ptr<ARPCheat>(new ARPCheat());
+	std::unique_ptr<ARPCheat> m_arpCheat;
 
 	struct Config
 	{
@@ -42,7 +47,7 @@ public:
 	void AddPacketHandler(PacketHandler* packetHandler);
 
 protected:
-	volatile bool m_isAttacking = false;
+	std::atomic_bool m_isAttacking;
 
 	SyncMap<IpAddress, std::shared_ptr<Config> > m_attackList; // IP -> Config
 	SyncMap<MacAddress, std::shared_ptr<Config> > m_attackListMac; // MAC -> Config

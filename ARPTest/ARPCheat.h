@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include "SyncMap.h"
 #include "TypeHelper.h"
 #include <thread>
@@ -7,6 +8,11 @@
 class ARPCheat
 {
 public:
+	ARPCheat()
+	{
+		m_isAttacking = false;
+	}
+
 	void init();
 
 	struct Config
@@ -23,7 +29,7 @@ public:
 	void StopAttack();
 
 protected:
-	volatile bool m_isAttacking = false;
+	std::atomic_bool m_isAttacking;
 
 	SyncMap<IpAddress, Config> m_attackList; // IP -> Config
 

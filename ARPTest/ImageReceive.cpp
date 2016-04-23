@@ -82,24 +82,28 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 
 		// get information
 		Config& target = m_attackList[targetIp];
+		target.receiveImageInfo.m_lock.lock(); // make sure receiveInfo is not deleted
 		auto it = target.receiveImageInfo.find(targetPort);
 		if (it == target.receiveImageInfo.end())
 		{
 			// :( bad luck, we may have missed an image
-			TRACE("image (%s:%u) missed\n", (CString)targetIp, targetPort);
+			TRACE("image (%s:%u) missed\n", (CString)targetIp, ntohs(targetPort));
+			target.receiveImageInfo.m_lock.unlock();
 			return;
 		}
 		auto& receiveInfo = it->second;
 		receiveInfo.ref++;
+		target.receiveImageInfo.m_lock.unlock();
+
 		IPPacket* pIp = (IPPacket*)&curPkt[ETH_LENGTH];
 		DWORD ipLen = pIp->headerLen * 4;
 		TCPPacket* pTcp = (TCPPacket*)&curPkt[ETH_LENGTH + ipLen];
 		DWORD tcpLen = pTcp->headerLen * 4;
 
-		// exception
-		if (pTcp->rst)
+		// stop
+		if (pTcp->fin || pTcp->rst)
 		{
-			TRACE("receive image (%s:%u) RST!\n", (CString)targetIp, targetPort);
+			TRACE("receive image (%s:%u) FIN or RST!\n", (CString)targetIp, ntohs(targetPort));
 			receiveInfo.shouldRelease = true;
 			goto End;
 		}
@@ -108,24 +112,25 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 			// parse
 			UINT filePos = ntohl(pTcp->seq) - receiveInfo.startSeq;
 			char* pHttp = (char*)pTcp + tcpLen;
-			UINT httpLen = (char*)curPkt.get() + len - pHttp;
+			UINT httpLen = ntohs(pIp->totalLen) - ipLen - tcpLen;
 			if (isInit) // is initial packet
 			{
 				// get content length
 				char* pContentLength = strstr(pHttp, "Content-Length: ");
 				if (pContentLength == nullptr) // it should exist!
 				{
+					TRACE("receive image (%s:%u) no content length\n", (CString)targetIp, ntohs(targetPort));
 					receiveInfo.shouldRelease = true;
 					goto End;
 				}
 				pContentLength += 16;
 				receiveInfo.restContentLen = atoi(pContentLength);
-				if (receiveInfo.restContentLen <= 0 || receiveInfo.restContentLen > 1024 * 1024 * 5) // impossible!
+				if (receiveInfo.restContentLen <= 100 || receiveInfo.restContentLen > 1024 * 1024 * 5) // impossible!
 				{
+					TRACE("receive image (%s:%u) content length invalid(%u)\n", (CString)targetIp, ntohs(targetPort), receiveInfo.restContentLen);
 					receiveInfo.shouldRelease = true;
 					goto End;
 				}
-				TRACE("restContentLen = %d\n", receiveInfo.restContentLen);
 
 				// discard the HTTP header
 				char* pContent = strstr(pHttp, "\r\n\r\n");
@@ -133,6 +138,7 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 				{
 					UINT headerLen = pContent + 4 - pHttp;
 					pHttp = pContent + 4;
+					httpLen -= headerLen;
 
 					// get seq
 					receiveInfo.startSeq = ntohl(pTcp->seq) + headerLen;
@@ -140,10 +146,9 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 				}
 			}
 
-			TRACE("filePos = %u\n", filePos);
 			if (filePos > 1024 * 1024 * 5) // impossible!
 			{
-				TRACE("receive image (%s:%u) filePos invalid\n", (CString)targetIp, targetPort);
+				TRACE("receive image (%s:%u) filePos invalid(%u)\n", (CString)targetIp, ntohs(targetPort), filePos);
 				receiveInfo.shouldRelease = true;
 				goto End;
 			}
@@ -158,7 +163,7 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 				CreateDirs("image\\" + (CString)targetIp);
 				DWORD time = GetTickCount();
 				CString name;
-				for (int i = 0; i < 10; i++)
+				for (UINT i = 0; i < 10; i++)
 				{
 					name.Format("image\\%s\\%u.jpg", (CString)targetIp, time + i);
 					if (receiveInfo.imageFile.Open(name, CFile::modeCreate | CFile::modeWrite))
@@ -172,35 +177,34 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 			receiveInfo.imageFile.Seek(filePos, CFile::begin);
 			receiveInfo.imageFile.Write(pHttp, httpLen);
 			receiveInfo.restContentLen -= httpLen;
-			TRACE("new restContentLen = %d\n", receiveInfo.restContentLen);
 		}
 
 		// response
-		{
-			AdapterHandle adapter(GetAdapterHandle());
-			if (adapter == nullptr)
-				goto End;
+		//{
+		//	AdapterHandle adapter(GetAdapterHandle());
+		//	if (adapter == nullptr)
+		//		goto End;
 
-			std::unique_ptr<BYTE[]> ackPkt(new BYTE[ETH_LENGTH + ipLen + tcpLen]);
-			*(MacAddress*)ackPkt.get() = g_netManager.m_gatewayMac;
-			*(MacAddress*)(ackPkt.get() + 6) = g_netManager.m_selfMac;
-			memcpy(ackPkt.get() + 12, curPkt.get() + 12, 2 + ipLen + tcpLen);
-			IPPacket* pAckIp = (IPPacket*)(ackPkt.get() + ETH_LENGTH);
-			pAckIp->identification = htons(ntohs(pAckIp->identification) + 1);
-			pAckIp->totalLen = htons((WORD)(ipLen + tcpLen));
-			pAckIp->timeToLive = 64;
-			pAckIp->sourceIp = targetIp;
-			pAckIp->destinationIp = pIp->sourceIp;
-			pAckIp->CalcCheckSum();
-			TCPPacket* pAckTcp = (TCPPacket*)(ackPkt.get() + ETH_LENGTH + ipLen);
-			pAckTcp->sourcePort = targetPort;
-			pAckTcp->destinationPort = pTcp->sourcePort;
-			pAckTcp->seq = pTcp->ack;
-			pAckTcp->ack = htonl(ntohl(pTcp->seq) + (len - ETH_LENGTH - ipLen - tcpLen));
-			pAckTcp->psh = 0;
-			pAckTcp->CalcCheckSum(pAckIp->sourceIp, pAckIp->destinationIp, (WORD)tcpLen);
-			pcap_sendpacket(adapter.get(), (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
-		}
+		//	std::unique_ptr<BYTE[]> ackPkt(new BYTE[ETH_LENGTH + ipLen + tcpLen]);
+		//	*(MacAddress*)ackPkt.get() = g_netManager.m_gatewayMac;
+		//	*(MacAddress*)(ackPkt.get() + 6) = g_netManager.m_selfMac;
+		//	memcpy(ackPkt.get() + 12, curPkt.get() + 12, 2 + ipLen + tcpLen);
+		//	IPPacket* pAckIp = (IPPacket*)(ackPkt.get() + ETH_LENGTH);
+		//	//pAckIp->identification = htons(ntohs(pAckIp->identification) + 1);
+		//	pAckIp->totalLen = htons((WORD)(ipLen + tcpLen));
+		//	pAckIp->timeToLive = 64;
+		//	pAckIp->sourceIp = targetIp;
+		//	pAckIp->destinationIp = pIp->sourceIp;
+		//	pAckIp->CalcCheckSum();
+		//	TCPPacket* pAckTcp = (TCPPacket*)(ackPkt.get() + ETH_LENGTH + ipLen);
+		//	pAckTcp->sourcePort = targetPort;
+		//	pAckTcp->destinationPort = pTcp->sourcePort;
+		//	pAckTcp->seq = pTcp->ack;
+		//	pAckTcp->ack = htonl(ntohl(pTcp->seq) + (len - ETH_LENGTH - ipLen - tcpLen));
+		//	pAckTcp->psh = 0;
+		//	pAckTcp->CalcCheckSum(pAckIp->sourceIp, pAckIp->destinationIp, (WORD)tcpLen);
+		//	pcap_sendpacket(adapter.get(), (u_char*)ackPkt.get(), ETH_LENGTH + sizeof(IPPacket)+sizeof(TCPPacket));
+		//}
 
 		// finish
 		if (receiveInfo.restContentLen <= 0)
@@ -210,10 +214,12 @@ void ImageReceive::ReceiveImage(IpAddress targetIp, WORD targetPort, const pcap_
 		}
 
 	End:
-		if (--receiveInfo.ref <= 0 && receiveInfo.shouldRelease)
-		{
-			TRACE("receive image (%s:%u) finish\n", (CString)targetIp, targetPort);
-			target.receiveImageInfo.erase(targetPort);
+		{SyncMap<WORD, Config::ReceiveImageInfo>::lock_guard lock(target.receiveImageInfo.m_lock);
+			if (--receiveInfo.ref <= 0 && receiveInfo.shouldRelease)
+			{
+				TRACE("receive image (%s:%u) finish\n", (CString)targetIp, ntohs(targetPort));
+				target.receiveImageInfo.erase(targetPort);
+			}
 		}
 	});
 }

@@ -96,7 +96,6 @@ void ARPCheat::StartAttack()
 						continue;
 					if (i.second.cheatTarget) // send to target
 					{
-						TRACE("%s\n", (CString)i.first);
 						packet.SetTarget(i.first, g_netManager.m_host[i.first]);
 						packet.senderIp = g_netManager.m_selfGateway;
 						pcap_sendpacket(adapter.get(), (u_char*)&packet, sizeof(packet));

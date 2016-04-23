@@ -2,6 +2,7 @@
 #include "PacketHandler.h"
 #include "SyncMap.h"
 #include <set>
+#include <atomic>
 #include <mutex>
 #include "TypeHelper.h"
 
@@ -16,13 +17,18 @@ public:
 		// image infomation used to receive image
 		struct ReceiveImageInfo
 		{
-			volatile int ref = 0;
+			std::atomic_int ref;
 			bool shouldRelease = false;
 			DWORD startSeq = 1;
 			std::set<UINT> visitedPos;
 			int restContentLen = 0;
 			CFile imageFile;
 			std::mutex fileLock;
+
+			ReceiveImageInfo()
+			{
+				ref = 0;
+			}
 		};
 		SyncMap<WORD, ReceiveImageInfo> receiveImageInfo; // port -> ReceiveImageInfo
 	};
